@@ -209,6 +209,8 @@
     'space-bunny', 'step-5-preview'
   ];
   var configuredModels = [];
+  // 小写 id -> 配置里写的大写形式。上游会归一化成小写存用量，展示时换回配置的写法。
+  var modelDisplay = {};
   // 连通性探测结果缓存：看板每 10 秒重建一次列表，不缓存的话刚测出的结果会被覆盖。
   var probeResults = {};
   // 正在探测的模型：探测期间不重建列表，否则「测试中」的按钮会被抹掉。
@@ -225,6 +227,12 @@
   };
   var shortModel = function (name) {
     return String(name || 'unknown').replace(/^m\//, '');
+  };
+  // 用量记录里存的是归一化后的小写 id（上游只认小写），展示时换回配置里的大写写法，
+  // 否则会出现「列表大写、最近请求小写」两套写法。
+  var displayModel = function (name) {
+    var raw = shortModel(name);
+    return modelDisplay[raw.toLowerCase()] || raw;
   };
   var pick = function (id) { return document.getElementById(id); };
 
@@ -274,14 +282,15 @@
     var host = pick('models');
     host.innerHTML = '';
     var used = {};
-    (byModel || []).forEach(function (m) { used[shortModel(m.model)] = m; });
+    // 比较必须忽略大小写：用量里存小写，配置里是 DeepSeek-V4.1-Flash 这种写法。
+    (byModel || []).forEach(function (m) { used[shortModel(m.model).toLowerCase()] = m; });
 
     var ids = {};
     var rows = (configured || []).map(function (m) {
-      ids[shortModel(m.id)] = true;
+      ids[shortModel(m.id).toLowerCase()] = true;
       return { id: shortModel(m.id), name: m.name || '', pending: false };
     });
-    var extras = EXTRA_MODELS.filter(function (id) { return !ids[id]; }).map(function (id) {
+    var extras = EXTRA_MODELS.filter(function (id) { return !ids[id.toLowerCase()]; }).map(function (id) {
       return { id: id, name: '未配置', pending: true };
     });
     pick('model-note').textContent = rows.length + ' 个已配置 · ' + extras.length + ' 个可添加';
@@ -293,7 +302,7 @@
       head.innerHTML = label + (hint ? ' <span class="note">' + hint + '</span>' : '');
       host.appendChild(head);
       items.forEach(function (item) {
-        var stat = used[item.id];
+        var stat = used[item.id.toLowerCase()];
         var cached = probeResults[item.id];
         // 60 秒内的探测结果优先于默认状态：失败的红点不能被自动刷新洗回灰色。
         var fresh = cached && (Date.now() - cached.at) < 60000;
@@ -376,7 +385,8 @@
       };
     }
     return {
-      text: '~' + (ct / (ms / 1000)).toFixed(1),
+      // 用 ≈ 而不是 ~：12px 下波浪线会被看成负号，估出来的速度看着像 -2.8。
+      text: '≈' + (ct / (ms / 1000)).toFixed(1),
       title: '旧记录无首字计时，按整体耗时估算（含等上下文），会明显偏低',
     };
   }
@@ -398,7 +408,7 @@
       var sp = speedCell(r);
       tr.innerHTML =
         '<td>' + clock(r.t) + '</td>' +
-        '<td class="model"><span class="pill">' + shortModel(r.m) + '</span></td>' +
+        '<td class="model"><span class="pill">' + displayModel(r.m) + '</span></td>' +
         '<td>' + (r.u || '—') + '</td>' +
         '<td class="num">' + (failed ? '—' : num(r.pt)) + '</td>' +
         '<td class="num">' + (failed ? '—' : num(r.ct)) + '</td>' +
@@ -425,6 +435,10 @@
       fetch(BASE + '/v1/models').then(function (r) { return r.json(); })
     ]).then(function (res) {
       configuredModels = ((res[2] && res[2].data) || []).slice();
+      modelDisplay = {};
+      configuredModels.forEach(function (m) {
+        if (m && m.id) modelDisplay[String(m.id).toLowerCase()] = m.id;
+      });
       renderSummary(res[0] || {});
       renderRecent((res[1] && res[1].items) || []);
       markUpdated();

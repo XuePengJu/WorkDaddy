@@ -203,12 +203,29 @@ function isAccountLevelFailure(status) {
   return status === 401 || status === 402 || status === 403 || status === 429;
 }
 
+// 上游对模型 id 严格区分大小写：传 DeepSeek-V4.1-Flash 会直接 400 service info not found。
+// 所以按小写建一份索引做归一化，让配置里写成什么大小写都能落到上游认的写法。
+// 只纠正已知 id —— 上游新增的模型名不在表里时原样透传，避免误改。
+const UPSTREAM_MODEL_IDS = [
+  'deepseek-v4.1-flash', 'deepseek-v4-pro',
+  'glm-5.2', 'glm-5.3', 'glm-5.3-flash',
+  'hy3', 'hy3-c', 'hy3-x', 'hy4-preview', 'hy4-preview-f',
+  'kimi-k2.7', 'mimo-v2.6-pro', 'minimax-m3', 'minimax-m3.1-flash',
+  'space-bunny', 'step-5-preview',
+  'auto', 'fast-model', 'balanced-model', 'deep-model',
+];
+const CANONICAL_MODEL_ID = new Map(UPSTREAM_MODEL_IDS.map((id) => [id.toLowerCase(), id]));
+
 function normalizeModel(model) {
   const value = String(model || '').trim();
+  let stripped = value;
   for (const prefix of MODEL_PREFIXES) {
-    if (value.startsWith(prefix)) return value.slice(prefix.length);
+    if (stripped.startsWith(prefix)) {
+      stripped = stripped.slice(prefix.length);
+      break;
+    }
   }
-  return value;
+  return CANONICAL_MODEL_ID.get(stripped.toLowerCase()) || stripped;
 }
 
 /**
