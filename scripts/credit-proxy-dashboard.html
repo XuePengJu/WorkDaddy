@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网关用量 · WorkDaddy</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --faint: #9aa0a6;
+    --border: #e6e8eb;
+    --accent: #3b82f6;
+    --accent-soft: #eff6ff;
+    --bar: #dbeafe;
+    --ok: #16a34a;
+    --warn: #d97706;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b;
+      --card: #1d2025;
+      --text: #e6e8eb;
+      --muted: #9aa3ad;
+      --faint: #7b828b;
+      --border: #2b2f36;
+      --accent: #60a5fa;
+      --accent-soft: #1e2a3d;
+      --bar: #2a3b55;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 20px 56px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--faint); font-size: 12px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .topbar .sub { display: flex; align-items: center; gap: 8px; }
+  button.refresh {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 8px; padding: 5px 11px; font-size: 12px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s;
+  }
+  button.refresh:hover { color: var(--accent); border-color: var(--accent); }
+  button.refresh:active { opacity: .7; }
+
+  .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+  @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; min-height: 84px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .value { font-size: 24px; font-weight: 650; letter-spacing: .3px; font-variant-numeric: tabular-nums; }
+  .card .hint { color: var(--faint); font-size: 11px; margin-top: 4px; min-height: 15px; }
+  .card.accent .value { color: var(--accent); }
+
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; font-weight: 650; margin: 0 0 14px; color: var(--text); display: flex; justify-content: space-between; align-items: baseline; }
+  section h2 .note { font-weight: 400; font-size: 11px; color: var(--faint); }
+
+  .chart { display: flex; align-items: flex-end; gap: 10px; height: 132px; padding-top: 8px; }
+  .col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
+  .col .stack { width: 100%; max-width: 46px; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+  .col .seg { border-radius: 3px; min-height: 1px; }
+  .col .seg.in { background: var(--bar); }
+  .col .seg.out { background: var(--accent); }
+  .col .day { font-size: 10px; color: var(--faint); white-space: nowrap; }
+  .col .num { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .col.today .day { color: var(--accent); font-weight: 600; }
+  .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+  .models .row { display: grid; grid-template-columns: 150px 1fr 68px 78px; gap: 12px; align-items: center; padding: 7px 0; font-size: 12px; }
+  .models .row + .row { border-top: 1px solid var(--border); }
+  .models .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .models .track { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
+  .models .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .models .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { .models .row { grid-template-columns: 100px 1fr 60px; } .models .credit { display: none; } }
+
+  .mlist .grp { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--faint); padding: 10px 0 2px; }
+  .mlist .grp:first-child { padding-top: 0; }
+  .mlist .grp .note { font-size: 11px; color: var(--faint); }
+  .mlist .mrow { display: grid; grid-template-columns: 12px minmax(110px, 180px) 1fr 54px 62px 66px; gap: 10px; align-items: center; padding: 7px 0; font-size: 12px; }
+  .mlist .mrow + .mrow { border-top: 1px solid var(--border); }
+  .mlist .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .mlist .dot.ok { background: var(--ok); }
+  .mlist .dot.bad { background: var(--warn); }
+  .mlist .mid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mlist .mrow.pending .mid { font-weight: 400; color: var(--muted); }
+  .mlist .msub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mlist .mnum { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mlist .mtest {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 7px; padding: 3px 0; font-size: 11px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s; text-align: center;
+  }
+  .mlist .mtest:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .mlist .mtest:disabled { opacity: .6; cursor: default; }
+  .mlist .mtest.ok { color: var(--ok); border-color: var(--ok); }
+  .mlist .mtest.bad { color: var(--warn); border-color: var(--warn); }
+  @media (max-width: 640px) {
+    .mlist .mrow { grid-template-columns: 12px 1fr 54px 66px; }
+    .mlist .msub, .mlist .mnum.credit { display: none; }
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--faint); font-weight: 500; font-size: 11px; padding: 0 8px 8px; white-space: nowrap; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 7px 8px; border-top: 1px solid var(--border); white-space: nowrap; }
+  td.model { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; }
+  .fail { color: var(--warn); }
+  .empty { color: var(--faint); font-size: 12px; padding: 14px 0; text-align: center; }
+  .scroller { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>网关用量</h1>
+      <div class="sub">只统计经本地网关（47900）转发的请求</div>
+    </div>
+    <div class="sub">
+      <span id="updated">—</span>
+      <button class="refresh" id="refresh" type="button">刷新</button>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">今日请求</div>
+      <div class="value" id="k-requests">—</div>
+      <div class="hint" id="k-failed"></div>
+    </div>
+    <div class="card">
+      <div class="label">今日输入 token</div>
+      <div class="value" id="k-prompt">—</div>
+      <div class="hint">含上下文与历史</div>
+    </div>
+    <div class="card">
+      <div class="label">今日输出 token</div>
+      <div class="value" id="k-completion">—</div>
+      <div class="hint" id="k-reasoning"></div>
+    </div>
+    <div class="card accent">
+      <div class="label">今日积分消耗</div>
+      <div class="value" id="k-credit">—</div>
+      <div class="hint">服务端回传的真实扣减</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>近 7 天 token 趋势 <span class="note" id="range"></span></h2>
+    <div class="chart" id="chart"></div>
+    <div class="legend">
+      <span><i style="background:var(--bar)"></i>输入</span>
+      <span><i style="background:var(--accent)"></i>输出</span>
+    </div>
+  </section>
+
+  <section class="mlist">
+    <h2>模型 <span class="note" id="model-note"></span></h2>
+    <div id="models"></div>
+  </section>
+
+  <section>
+    <h2>最近请求 <span class="note" id="recent-note"></span></h2>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th><th>模型</th><th>账号</th>
+            <th class="num">输入</th><th class="num">输出</th><th class="num">速度 <span style="opacity:.7">tok/s</span></th><th class="num">思考</th>
+            <th class="num">积分</th><th class="num">耗时</th>
+          </tr>
+        </thead>
+        <tbody id="recent"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="recent-empty" style="display:none">今天还没有经网关的请求</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var BASE = 'http://127.0.0.1:47900';
+  // 由代理在响应 /dashboard 时注入，只用于「测试」按钮调用本机控制接口。
+  var TOKEN = '__GW_TOKEN__';
+  // 上游接过、但 models.json 里还没配的模型 id。上游没有模型列表接口，
+  // 这份清单只能手动维护；发现新的在这里补一行即可。
+  var EXTRA_MODELS = [
+    'glm-5.2', 'hy3', 'hy3-c', 'hy3-x', 'hy4-preview', 'hy4-preview-f',
+    'kimi-k2.7', 'mimo-v2.6-pro', 'minimax-m3', 'minimax-m3.1-flash',
+    'space-bunny', 'step-5-preview'
+  ];
+  var configuredModels = [];
+  // 连通性探测结果缓存：看板每 10 秒重建一次列表，不缓存的话刚测出的结果会被覆盖。
+  var probeResults = {};
+  // 正在探测的模型：探测期间不重建列表，否则「测试中」的按钮会被抹掉。
+  var probing = {};
+  var num = function (n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('zh-CN');
+  };
+  var money = function (n) { return (Number(n) || 0).toFixed(2); };
+  var clock = function (ms) {
+    var d = new Date(ms);
+    var p = function (v) { return String(v).padStart(2, '0'); };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  };
+  var shortModel = function (name) {
+    return String(name || 'unknown').replace(/^m\//, '');
+  };
+  var pick = function (id) { return document.getElementById(id); };
+
+  function renderSummary(s) {
+    var t = s.today || {};
+    pick('k-requests').textContent = num(t.requests);
+    pick('k-failed').textContent = t.failed ? (t.failed + ' 次失败') : '';
+    pick('k-prompt').textContent = num(t.prompt);
+    pick('k-completion').textContent = num(t.completion);
+    pick('k-reasoning').textContent = (t.reasoning ? ('思考 ' + num(t.reasoning)) : '不含思考') + (t.tokps ? (' · 均速 ' + t.tokps + ' tok/s') : '');
+    pick('k-credit').textContent = money(t.credit);
+
+    // 趋势图：柱高按输入+输出归一，最少 2px 保证空白日也可见
+    var daily = s.daily || [];
+    var max = 0;
+    daily.forEach(function (d) { max = Math.max(max, (d.prompt || 0) + (d.completion || 0)); });
+    var todayKey = t.date;
+    var host = pick('chart');
+    host.innerHTML = '';
+    daily.forEach(function (d) {
+      var total = (d.prompt || 0) + (d.completion || 0);
+      var h = max > 0 ? (total / max) * 100 : 0;
+      var inShare = total > 0 ? ((d.prompt || 0) / total) * 100 : 100;
+      var col = document.createElement('div');
+      col.className = 'col' + (d.date === todayKey ? ' today' : '');
+      col.title = d.date + '　输入 ' + num(d.prompt) + '　输出 ' + num(d.completion) + '　积分 ' + money(d.credit);
+      col.innerHTML =
+        '<div class="num">' + (total ? num(total) : '') + '</div>' +
+        '<div class="stack" style="height:' + Math.max(h, total ? 3 : 0) + '%">' +
+          '<div class="seg in" style="flex:0 0 ' + inShare + '%"></div>' +
+          '<div class="seg out" style="flex:1 1 auto"></div>' +
+        '</div>' +
+        '<div class="day">' + d.date.slice(5) + '</div>';
+      host.appendChild(col);
+    });
+    if (daily.length) {
+      pick('range').textContent = daily[0].date + ' ~ ' + daily[daily.length - 1].date;
+    }
+
+    renderModels(configuredModels, s.byModel);
+  }
+
+  // 「模型」区块：已配置的（走本网关）+ 上游可用但没配的，两边都能单独测连通性。
+  function renderModels(configured, byModel) {
+    // 有探测在飞行中就不重建：重建会把按钮和刚拿到的结果一起抹掉。
+    if (Object.keys(probing).length) return;
+    var host = pick('models');
+    host.innerHTML = '';
+    var used = {};
+    (byModel || []).forEach(function (m) { used[shortModel(m.model)] = m; });
+
+    var ids = {};
+    var rows = (configured || []).map(function (m) {
+      ids[shortModel(m.id)] = true;
+      return { id: shortModel(m.id), name: m.name || '', pending: false };
+    });
+    var extras = EXTRA_MODELS.filter(function (id) { return !ids[id]; }).map(function (id) {
+      return { id: id, name: '未配置', pending: true };
+    });
+    pick('model-note').textContent = rows.length + ' 个已配置 · ' + extras.length + ' 个可添加';
+
+    function group(label, hint, items) {
+      if (!items.length) return;
+      var head = document.createElement('div');
+      head.className = 'grp';
+      head.innerHTML = label + (hint ? ' <span class="note">' + hint + '</span>' : '');
+      host.appendChild(head);
+      items.forEach(function (item) {
+        var stat = used[item.id];
+        var cached = probeResults[item.id];
+        // 60 秒内的探测结果优先于默认状态：失败的红点不能被自动刷新洗回灰色。
+        var fresh = cached && (Date.now() - cached.at) < 60000;
+        var dotCls = fresh ? ('dot ' + (cached.ok ? 'ok' : 'bad')) : ('dot' + (stat ? ' ok' : ''));
+        var btnCls = fresh ? ('mtest ' + (cached.ok ? 'ok' : 'bad')) : 'mtest';
+        var btnText = fresh ? cached.text : '测试';
+        var row = document.createElement('div');
+        row.className = 'mrow' + (item.pending ? ' pending' : '');
+        row.dataset.model = item.id;
+        row.innerHTML =
+          '<span class="' + dotCls + '"></span>' +
+          '<span class="mid">' + item.id + '</span>' +
+          '<span class="msub">' + item.name + '</span>' +
+          '<span class="mnum">' + (stat ? stat.requests + ' 次' : '—') + '</span>' +
+          '<span class="mnum credit">' + (stat ? money(stat.credit) : '—') + '</span>' +
+          '<button class="' + btnCls + '" type="button">' + btnText + '</button>';
+        if (fresh) {
+          row.title = cached.title;
+        } else if (stat) {
+          row.title = '今日 请求 ' + stat.requests + '　输入 ' + num(stat.prompt) + '　输出 ' + num(stat.completion);
+        }
+        host.appendChild(row);
+      });
+    }
+    group('已配置 · 走本网关', '', rows);
+    group('上游可用但未配置', '把 id 填进 models.json 即可用', extras);
+  }
+
+  // 单个模型连通性探测：极短请求确认这个 id 现在真能通，失败时保留上游原话。
+  function probeModel(model, btn, row) {
+    var dot = row.querySelector('.dot');
+    probing[model] = true;
+    btn.disabled = true;
+    btn.className = 'mtest';
+    btn.textContent = '测试中';
+    row.title = '正在向 ' + model + ' 发送探测请求…';
+
+    function finish(ok, text, title) {
+      delete probing[model];
+      probeResults[model] = { ok: ok, text: text, title: title, at: Date.now() };
+      btn.disabled = false;
+      btn.className = 'mtest ' + (ok ? 'ok' : 'bad');
+      btn.textContent = text;
+      dot.className = 'dot ' + (ok ? 'ok' : 'bad');
+      row.title = title;
+      // 结果留在按钮上直到缓存过期（60 秒），期间仍可再点。
+      // 早先 4 秒回弹到「测试」会和 10 秒轮询重建打架，出现文字闪烁。
+    }
+
+    fetch(BASE + '/control/test-model', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({ model: model }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.ok) {
+        var ms = Number(d.ms) || 0;
+        finish(true, ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms',
+          '连通正常 · 账号 ' + (d.uid || '—') + ' · ' + ms + 'ms');
+      } else {
+        finish(false, '失败', (d && (d.message || ('HTTP ' + d.status))) || '探测失败');
+      }
+    }).catch(function (e) {
+      finish(false, '失败', '连不上网关：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  // 速度 = 输出 token ÷ 生成耗时（总耗时减去首 token 延迟）。
+  // 旧记录没有首字计时，只能退回整体速率并用 ~ 标记，避免被误读成真实生成速度。
+  function speedCell(r) {
+    var ct = Number(r.ct) || 0;
+    var ms = Number(r.ms) || 0;
+    if (!ct || !ms) return { text: '—', title: '' };
+    var ft = Number(r.ft) || 0;
+    if (ft > 0 && ms > ft) {
+      var gen = ms - ft;
+      var tps = ct / (gen / 1000);
+      return {
+        text: tps >= 10 ? tps.toFixed(0) : tps.toFixed(1),
+        title: '首字 ' + (ft / 1000).toFixed(2) + 's · 生成 ' + (gen / 1000).toFixed(2) + 's · 输出 ' + num(ct) + ' tok',
+      };
+    }
+    return {
+      text: '~' + (ct / (ms / 1000)).toFixed(1),
+      title: '旧记录无首字计时，按整体耗时估算（含等上下文），会明显偏低',
+    };
+  }
+
+  function renderRecent(items) {
+    var body = pick('recent');
+    body.innerHTML = '';
+    var empty = pick('recent-empty');
+    if (!items || !items.length) {
+      empty.style.display = 'block';
+      pick('recent-note').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    pick('recent-note').textContent = '共 ' + items.length + ' 条';
+    items.forEach(function (r) {
+      var tr = document.createElement('tr');
+      var failed = r.ok === 0;
+      var sp = speedCell(r);
+      tr.innerHTML =
+        '<td>' + clock(r.t) + '</td>' +
+        '<td class="model"><span class="pill">' + shortModel(r.m) + '</span></td>' +
+        '<td>' + (r.u || '—') + '</td>' +
+        '<td class="num">' + (failed ? '—' : num(r.pt)) + '</td>' +
+        '<td class="num">' + (failed ? '—' : num(r.ct)) + '</td>' +
+        '<td class="num" title="' + sp.title + '">' + (failed ? '—' : sp.text) + '</td>' +
+        '<td class="num">' + (failed ? '—' : (r.rt ? num(r.rt) : '0')) + '</td>' +
+        '<td class="num">' + (failed ? '<span class="fail">失败</span>' : money(r.cr)) + '</td>' +
+        '<td class="num">' + (r.ms ? (r.ms >= 1000 ? (r.ms / 1000).toFixed(1) + 's' : r.ms + 'ms') : '—') + '</td>';
+      body.appendChild(tr);
+    });
+  }
+
+  function markUpdated() {
+    pick('updated').textContent = '更新于 ' + clock(Date.now());
+  }
+
+  function fail(msg) {
+    pick('updated').textContent = msg;
+  }
+
+  function load() {
+    Promise.all([
+      fetch(BASE + '/usage/summary?days=7').then(function (r) { return r.json(); }),
+      fetch(BASE + '/usage/recent?limit=20').then(function (r) { return r.json(); }),
+      fetch(BASE + '/v1/models').then(function (r) { return r.json(); })
+    ]).then(function (res) {
+      configuredModels = ((res[2] && res[2].data) || []).slice();
+      renderSummary(res[0] || {});
+      renderRecent((res[1] && res[1].items) || []);
+      markUpdated();
+    }).catch(function (e) {
+      fail('连不上网关：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  pick('refresh').addEventListener('click', load);
+  // 测试按钮用事件委托：列表每次刷新都会重建，直接绑在行上会丢监听。
+  pick('models').addEventListener('click', function (event) {
+    var btn = event.target.closest ? event.target.closest('.mtest') : null;
+    if (!btn || btn.disabled) return;
+    var row = btn.closest('.mrow');
+    if (!row || !row.dataset.model) return;
+    probeModel(row.dataset.model, btn, row);
+  });
+  load();
+  setInterval(load, 10000);
+})();
+</script>
+</body>
+</html>
