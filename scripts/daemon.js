@@ -530,8 +530,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.65：兼容空会话同步、自定义模型和重定向备份目录，工作目录恢复退避重试。
 // 1.2.66：刷新凭据按原信封加密保存，同账号刷新去重，过期账号保留手动切换。
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
-const DAEMON_VERSION = '1.2.68';
-const DAEMON_BUILD_ID = 'release-1.2.68-login-page-persona-switch';
+const DAEMON_VERSION = '1.2.71';
+const DAEMON_BUILD_ID = 'release-1.2.71-credit-proxy-control';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -568,6 +568,8 @@ const CDP_PORT_HINT = process.env.WBSWITCH_CDP_PORT
 const CDP_PORT_FILE = path.join(DATA_DIR, 'cdp-port.json');
 const UI_PORT_FILE = path.join(DATA_DIR, 'ui-port.json');
 const API_TOKEN_FILE = path.join(DATA_DIR, '.api-token');
+// 用户在面板里终止网关后留下的标记。由代理启动时自己检查，daemon 只负责增删。
+const CREDIT_PROXY_DISABLED_FILE = path.join(DATA_DIR, 'credit-proxy.disabled');
 const BACKGROUND_BLUR_FILE = path.join(DATA_DIR, 'background-blur.json');
 const themeTextShadow = require('./theme-text-shadow.js').createThemeTextShadow(path.join(DATA_DIR, 'theme-text-shadow.json'));
 const MAX_BACKGROUND_BLUR_PX = 32;
@@ -11852,6 +11854,26 @@ function handleApi(req, res) {
       }
     });
   }
+  // 本地网关（credit-proxy）的手动开关：面板里「启动网关 / 终止网关」按钮用。
+  // 只做本机 TCP 探测与标记文件增删，不碰上游、不动账号凭证。
+  if (req.method === 'GET' && p === '/api/credit-proxy/status') {
+    return creditProxyStatus().then(
+      (status) => json(res, 200, { ok: true, ...status }),
+      (e) => json(res, 500, { ok: false, error: e.message })
+    );
+  }
+  if (req.method === 'POST' && p === '/api/credit-proxy/start') {
+    return enableCreditProxy().then(
+      (status) => json(res, 200, { ok: true, ...status }),
+      (e) => json(res, 500, { ok: false, error: e.message })
+    );
+  }
+  if (req.method === 'POST' && p === '/api/credit-proxy/stop') {
+    return disableCreditProxy().then(
+      (status) => json(res, 200, { ok: true, ...status }),
+      (e) => json(res, 500, { ok: false, error: e.message })
+    );
+  }
   // 自动复制规则：POST /api/sessions/auto-copy { uid, kind: session|workspace, key, enabled }
   if (req.method === 'POST' && p === '/api/sessions/auto-copy') {
     return readBody(req).then(async (body) => {
@@ -13140,6 +13162,138 @@ function startServer() {
 
 /* ================= 启动 ================= */
 
+/**
+ * 积分轮换代理 sidecar（本地 OpenAI 兼容端点，默认 47900）。
+ *
+ * 背景：独立 LaunchAgent 在部分机器上无法 bootstrap（沙箱/权限限制），
+ * 导致「重启客户端后 47900 没了、自定义模型直接不可用」。
+ * daemon 本身由系统登录项拉起，把代理挂在这里即可保证「客户端在，代理就在」。
+ *
+ * 行为约束：
+ *  1. 只探测 + 拉起，不接管退出；代理自己是独立 detached 进程，daemon 重启不会杀掉它。
+ *  2. 端口已被占用（已有代理在跑）就什么都不做，天然幂等。
+ *  3. 任何异常只记日志，绝不阻塞 daemon 启动。
+ */
+function creditProxyPort() {
+  const raw = Number(process.env.WBSWITCH_CREDIT_PROXY_PORT || 47900);
+  return Number.isFinite(raw) && raw > 0 ? raw : 47900;
+}
+
+function creditProxyDisabled() {
+  try {
+    return fs.existsSync(CREDIT_PROXY_DISABLED_FILE);
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 探测代理是否在监听：只做一次本地 TCP connect，不触发任何上游请求。 */
+function probeCreditProxy(timeoutMs = 800) {
+  const port = creditProxyPort();
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket = null;
+    const done = (listening) => {
+      if (settled) return;
+      settled = true;
+      try { if (socket) socket.destroy(); } catch (_) {}
+      resolve(listening);
+    };
+    socket = net.connect({ host: '127.0.0.1', port });
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+async function creditProxyStatus() {
+  const listening = await probeCreditProxy();
+  return { port: creditProxyPort(), listening, disabled: creditProxyDisabled() };
+}
+
+/** 拉起代理。用户主动终止过（标记存在）时直接跳过，任何自动调用都不该复活它。 */
+function startCreditProxySidecar() {
+  try {
+    if (creditProxyDisabled()) return;
+    const script = path.join(__dirname, 'credit-proxy-standalone.js');
+    if (!fs.existsSync(script)) return;
+    const port = creditProxyPort();
+    const probe = net.connect({ host: '127.0.0.1', port });
+    probe.setTimeout(800, () => { probe.destroy(); });
+    probe.once('connect', () => { probe.destroy(); });
+    probe.once('error', () => {
+      try {
+        const child = spawn(process.execPath, [script], {
+          detached: true,
+          stdio: 'ignore',
+          cwd: __dirname,
+          env: {
+            ...process.env,
+            WBSWITCH_DATA_DIR: DATA_DIR,
+            WBSWITCH_PROFILE: PROFILE.id,
+            WBSWITCH_CREDIT_PROXY_PORT: String(port),
+          },
+        });
+        child.unref();
+        log(`[credit-proxy] 端口 ${port} 无监听，已拉起本地积分代理 sidecar`);
+      } catch (error) {
+        log('[credit-proxy] 拉起失败: ' + (error && error.message || error));
+      }
+    });
+  } catch (error) {
+    log('[credit-proxy] 探测异常，跳过: ' + (error && error.message || error));
+  }
+}
+
+async function waitCreditProxy(expected, tries = 12) {
+  for (let i = 0; i < tries; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if ((await probeCreditProxy(400)) === expected) break;
+  }
+  return creditProxyStatus();
+}
+
+/** 面板点「启动网关」：先清标记，再拉起，最后回读真实状态而不是假定成功。 */
+async function enableCreditProxy() {
+  try { fs.unlinkSync(CREDIT_PROXY_DISABLED_FILE); } catch (_) {}
+  if (!(await probeCreditProxy(400))) startCreditProxySidecar();
+  return waitCreditProxy(true);
+}
+
+/**
+ * 面板点「终止网关」：让代理自己写标记并退出，避免各平台杀进程的差异。
+ * 标记由 daemon 先写一份，这样即使当前跑的是不认 /control/stop 的旧版代理，
+ * 看门狗也不会再把它拉起来。
+ */
+async function disableCreditProxy() {
+  let marked = false;
+  try {
+    fs.writeFileSync(CREDIT_PROXY_DISABLED_FILE, `${new Date().toISOString()}\n`);
+    marked = true;
+  } catch (error) {
+    log(`[credit-proxy] 写禁用标记失败: ${error && error.message}`);
+  }
+  if (await probeCreditProxy(400)) {
+    let token = '';
+    try { token = fs.readFileSync(API_TOKEN_FILE, 'utf8').trim(); } catch (_) {}
+    try {
+      await fetch(`http://127.0.0.1:${creditProxyPort()}/control/stop`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch (error) {
+      log(`[credit-proxy] 终止请求失败: ${error && error.message}`);
+    }
+  }
+  const status = await waitCreditProxy(false);
+  if (status.listening) {
+    log('[credit-proxy] 终止未生效：代理仍在监听（可能是旧版本，不认 /control/stop）');
+  }
+  return { ...status, marked };
+}
+
+
 process.on('uncaughtException', (error) => {
   log('[fatal] 未捕获异常: ' + (error && error.stack || error));
   captureException(error, { stage: 'daemon-uncaught' }).catch(() => {});
@@ -13167,6 +13321,11 @@ if (sessionBackupCleanup.removed || sessionBackupCleanup.retainedRecovery) {
   log(`[session-sync-backups] 启动清理 ${sessionBackupCleanup.removed} 个无用备份，保留 ${sessionBackupCleanup.retainedRecovery} 个 recovery-needed 备份`);
 }
 ensureAgentBridge(DATA_DIR, { profileId: PROFILE.id });
+startCreditProxySidecar();
+// 代理是无状态 sidecar，被杀/崩溃后不影响客户端，但自定义模型会立刻不可用。
+// 每 60s 巡检一次端口即可自愈；探测本身只是一次本地 TCP connect，开销可忽略。
+const creditProxyWatchdog = setInterval(startCreditProxySidecar, 60 * 1000);
+creditProxyWatchdog.unref && creditProxyWatchdog.unref();
 const automationAgentInboxTimer = setInterval(() => {
   const imported = importAgentInbox(DATA_DIR, { profileId: PROFILE.id });
   imported.forEach((item) => log(`[automation-agent] request=${item.requestId} ${item.ok ? 'imported=' + item.taskId : 'rejected=' + item.error}`));

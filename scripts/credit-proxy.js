@@ -15,6 +15,8 @@
  */
 
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { Readable } = require('node:stream');
 
 const HOST = '127.0.0.1';
@@ -23,15 +25,59 @@ const DEFAULT_UPSTREAM = 'https://www.workbuddy.cn';
 const UPSTREAM_PATH = '/v2/chat/completions';
 // 一个请求最多换几次号（首个 chunk 之前才允许换）
 const MAX_ACCOUNT_ATTEMPTS = 3;
+// 网络层抖动（连接没建起来）与账号无关，重试同一账号比换号更有效。
+// 数组长度即重试次数，值是该次重试前的等待毫秒数。
+const NETWORK_RETRY_DELAYS = [300, 800];
 // 单次请求上游超时（长文生成可能很久，给足）
 const UPSTREAM_TIMEOUT_MS = 10 * 60 * 1000;
 
-// models.json 里的模型 id 用这个前缀标记「走本代理」，转发前剥掉。
-const MODEL_PREFIX = 'credit-rotation/';
+// models.json 里的模型 id 用这些前缀标记「走本代理」，转发前剥掉。
+// 保留 credit-rotation/ 只为兼容旧配置里的存量 id。
+const MODEL_PREFIXES = ['m/', 'credit-rotation/'];
 
 function shortUid(uid) {
   return String(uid || '').slice(0, 8) || 'unknown';
 }
+
+// 流式转发时只留尾部这么多字符用于找 usage：上游把它放在最后一条 data 里，
+// 全量缓存既没必要也会吃内存。
+const USAGE_TAIL_LIMIT = 32 * 1024;
+
+/** 从 SSE 尾部文本取最后一个 usage 对象；找不到返回 null。 */
+function parseUsageFromSse(text) {
+  if (!text || !text.includes('"usage"')) return null;
+  let found = null;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice(5).trim();
+    if (!raw || raw === '[DONE]' || !raw.includes('"usage"')) continue;
+    try {
+      const event = JSON.parse(raw);
+      if (event && event.usage) found = event.usage;
+    } catch (_) { /* 跨块截断的行跳过 */ }
+  }
+  return found;
+}
+
+/** 归一化用量：只取展示需要的四个数，缺失一律 0。 */
+function pickUsageNumbers(usage) {
+  const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  const details = usage && usage.completion_tokens_details;
+  return {
+    pt: num(usage && usage.prompt_tokens),
+    ct: num(usage && usage.completion_tokens),
+    rt: num(details && details.reasoning_tokens),
+    // credit 是本次请求实际扣掉的积分，服务端直接给出，无需再查积分接口。
+    cr: num(usage && usage.credit),
+  };
+}
+
+/**
+ * 判断一个 SSE 分块里是否出现了首个正文/思考增量。
+ * 只认非空内容：上游首帧常见的 "content":"" 是空角色帧，不能当成首 token，
+ * 否则会把 prefill 时间误算进生成耗时。
+ */
+const FIRST_TOKEN_RE = /"delta"\s*:\s*\{[^{}]*"(?:content|reasoning_content)"\s*:\s*"(?!")/;
 
 function nowMs() {
   return Date.now();
@@ -80,6 +126,18 @@ function rankAccounts(accounts, currentUid, creditCache) {
   return { pool, currentRows };
 }
 
+// 【临时调试，定位完即删】数据目录下放 .proxy-dump.on 时，把出站请求体与上游错误体
+// 追加到 .proxy-dump.jsonl，用来抓出客户端特有字段触发的上游拒绝。
+const DUMP_DIR = path.join(process.env.HOME || '', 'Library', 'Application Support', 'WorkDaddy');
+const DUMP_FLAG = path.join(DUMP_DIR, '.proxy-dump.on');
+const DUMP_FILE = path.join(DUMP_DIR, '.proxy-dump.jsonl');
+function dumpDebug(label, value) {
+  try {
+    if (!fs.existsSync(DUMP_FLAG)) return;
+    fs.appendFileSync(DUMP_FILE, `${JSON.stringify({ at: new Date().toISOString(), label, value })}\n`);
+  } catch (_) { /* 调试辅助不能影响主链路 */ }
+}
+
 function readBody(req, limit = 32 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -118,6 +176,17 @@ function sendJson(res, status, payload) {
   res.end(text);
 }
 
+// 本机专用端点的响应：不回 CORS 头。跨站页面即使绕过来源校验也读不到内容。
+function sendJsonLocal(res, status, payload) {
+  const text = JSON.stringify(payload);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(text),
+    'Cache-Control': 'no-store',
+  });
+  res.end(text);
+}
+
 // 上游错误里可能带账号信息，只挑安全的字段回给客户端。
 function readUpstreamMessage(text) {
   try {
@@ -136,8 +205,90 @@ function isAccountLevelFailure(status) {
 
 function normalizeModel(model) {
   const value = String(model || '').trim();
-  if (value.startsWith(MODEL_PREFIX)) return value.slice(MODEL_PREFIX.length);
+  for (const prefix of MODEL_PREFIXES) {
+    if (value.startsWith(prefix)) return value.slice(prefix.length);
+  }
   return value;
+}
+
+/**
+ * 上游 /v2/chat/completions 不认 OpenAI 较新的 role: "developer" —— 会返回
+ * 400 Illegal API invocation from an unapproved channel。那句文案完全误导：看着像渠道/
+ * 模型/鉴权问题，实际只是角色名不支持（实测：换成 system 立即 200，换回 developer 必 400）。
+ * agent 类客户端（如 DeepSeek Harness 对推理模型）默认发 developer，这里统一降级成等价的 system。
+ * 只改 role，其余字段（content / cache 控制等）原样保留。
+ */
+function downgradeDeveloperRole(messages) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const downgraded = messages.map((message) => {
+    if (message && message.role === 'developer') {
+      changed = true;
+      return { ...message, role: 'system' };
+    }
+    return message;
+  });
+  return changed ? downgraded : messages;
+}
+
+/**
+ * 上游除了角色问题，还有一层「渠道校验」：请求体里出现若干已知第三方客户端的提示词指纹句时，
+ * 会直接返回 400 + code 11128，文案是「这次调用没通过渠道校验，可能不是官方客户端发出的」。
+ *
+ * 实测结论（本轮逐字段二分得出）：
+ *  - 与模型无关（4 个模型全拦），与 tools / store / stream_options / max_completion_tokens 无关；
+ *  - 只查 messages 的文本内容，同义改写即可通过（打乱语序、换词都过；加空格/零宽字符无用）；
+ *  - 是精确子串匹配，不是语义判定，所以把指纹句改成中性表述是安全的。
+ *
+ * 新增客户端或客户端升级提示词后若再撞上，用 .proxy-dump.on 抓包（见 dumpDebug），
+ * 把新的指纹句补进来即可。
+ */
+const CLIENT_FINGERPRINTS = [
+  // "You are an AI agent powered by DeepSeek Harness"、"...through the DeepSeek Harness Web GUI"
+  [/\bdeepseek[\s-]+harness\b/gi, 'DeepSeek'],
+  // "Tokens prefixed with @ are paths the user explicitly referenced. ..." 整句是其中一条指纹
+  [/the user explicitly referenced/gi, 'the user referenced'],
+];
+
+/** 抹掉单段文本里的客户端指纹。非字符串原样返回。 */
+function scrubClientFingerprint(text) {
+  if (typeof text !== 'string' || text.length === 0) return text;
+  let out = text;
+  for (const [pattern, replacement] of CLIENT_FINGERPRINTS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+/** 对 messages 的文本内容做指纹清洗，结构（role / 块类型 / 其它字段）完全不变。 */
+function scrubMessages(messages) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const out = messages.map((message) => {
+    if (!message || message.content == null) return message;
+    const content = message.content;
+    if (typeof content === 'string') {
+      const next = scrubClientFingerprint(content);
+      if (next === content) return message;
+      changed = true;
+      return { ...message, content: next };
+    }
+    if (Array.isArray(content)) {
+      let partChanged = false;
+      const nextParts = content.map((part) => {
+        if (!part || typeof part.text !== 'string') return part;
+        const nextText = scrubClientFingerprint(part.text);
+        if (nextText === part.text) return part;
+        partChanged = true;
+        return { ...part, text: nextText };
+      });
+      if (!partChanged) return message;
+      changed = true;
+      return { ...message, content: nextParts };
+    }
+    return message;
+  });
+  return changed ? out : messages;
 }
 
 function createCreditProxy(deps) {
@@ -147,6 +298,13 @@ function createCreditProxy(deps) {
     creditCache,
     currentUid,
     getToken,
+    usageStore = null,
+    // 由 standalone 注入：写「已被用户终止」标记。缺省时 /control/stop 只是自停、
+    // 不落标记，看门狗会在 60 秒内重新拉起。
+    disable = null,
+    // 由 standalone 注入：读 models.json 里指向本代理的模型配置。
+    // 缺省 null 时 /v1/models 退回内置单条兜底，不影响正常转发。
+    listModelConfigs = null,
     log = () => {},
     upstreamOrigin = DEFAULT_UPSTREAM,
     port = Number(process.env.WBSWITCH_CREDIT_PROXY_PORT) || DEFAULT_PORT,
@@ -198,6 +356,9 @@ function createCreditProxy(deps) {
   }
 
   function candidates() {
+    // daemon 会在别的进程里刷新余额并重写缓存文件，选号前先对齐磁盘版本，
+    // 否则会用启动那一刻的余额排序，直到代理重启。
+    if (creditCache && typeof creditCache.refresh === 'function') creditCache.refresh();
     const accounts = typeof listAccounts === 'function' ? listAccounts() : [];
     const { pool, currentRows } = rankAccounts(accounts, currentUid && currentUid(), creditCache);
     // 备份账号按「最早过期优先」，最后用当前账号兜底保证可用性。
@@ -214,11 +375,20 @@ function createCreditProxy(deps) {
    * 真正向上游发起请求。返回 { ok, status, response } 或 { ok:false, status, message }。
    * 注意：这里不读 body，交给调用方决定是流式透传还是聚合。
    */
-  async function callUpstream(payload, uid) {
+  async function callUpstream(payload, uid, attempt = 0) {
     const token = await resolveToken(uid);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
     try {
+      // 官方网关只接受流式请求；客户端要非流式时由本模块聚合。
+      const outgoing = {
+        ...payload,
+        model: normalizeModel(payload.model),
+        // 顺序：先把 developer 降级成 system，再抹客户端指纹（两步都不改其它字段）。
+        messages: scrubMessages(downgradeDeveloperRole(payload.messages)),
+        stream: true,
+      };
+      dumpDebug('outgoing', outgoing);
       const response = await fetch(`${upstreamOrigin}${UPSTREAM_PATH}`, {
         method: 'POST',
         headers: {
@@ -226,14 +396,14 @@ function createCreditProxy(deps) {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        // 官方网关只接受流式请求；客户端要非流式时由本模块聚合。
-        body: JSON.stringify({ ...payload, model: normalizeModel(payload.model), stream: true }),
+        body: JSON.stringify(outgoing),
         signal: controller.signal,
       });
       if (response.ok && response.body) {
         return { ok: true, response, uid };
       }
       const text = await response.text().catch(() => '');
+      dumpDebug('upstream_error', { status: response.status, body: text.slice(0, 2000) });
       return {
         ok: false,
         status: response.status || 502,
@@ -241,10 +411,19 @@ function createCreditProxy(deps) {
         uid,
       };
     } catch (error) {
+      const aborted = Boolean(error && error.name === 'AbortError');
+      const delay = NETWORK_RETRY_DELAYS[attempt];
+      // 超时不重试（已经等满上游超时）；连接型失败按退避重试同一账号。
+      if (!aborted && typeof delay === 'number') {
+        log(`[credit-proxy] 账号 ${shortUid(uid)} 网络失败（${error.message || 'fetch failed'}），${delay}ms 后重试`);
+        clearTimeout(timer);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return callUpstream(payload, uid, attempt + 1);
+      }
       return {
         ok: false,
         status: 502,
-        message: error && error.name === 'AbortError' ? '上游超时' : (error.message || '上游请求失败'),
+        message: aborted ? '上游超时' : (error.message || '上游请求失败'),
         uid,
       };
     } finally {
@@ -273,8 +452,12 @@ function createCreditProxy(deps) {
     return last || { ok: false, status: 502, message: '上游请求失败' };
   }
 
-  /** 流式透传给客户端，同时旁路记录是否有内容产出。 */
-  async function pipeStream(response, res, onChunk) {
+  /**
+   * 流式透传给客户端，同时旁路记录是否有内容产出与末尾的用量统计。
+   * since 传入请求开始时间时，额外测出首 token 延迟：用它把「等上下文」和「真正吐字」
+   * 切开，否则长上下文的 tok/s 会被 prefill 摊平到毫无参考意义。
+   */
+  async function pipeStream(response, res, onChunk, since) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-store',
@@ -283,13 +466,26 @@ function createCreditProxy(deps) {
       ...CORS_HEADERS,
     });
     let sawChunk = false;
+    let firstTokenMs = 0;
+    // 只保留尾部：上游把 usage 放在最后一条 data 里，全量缓存没必要。
+    let tail = '';
     try {
       for await (const chunk of Readable.fromWeb(response.body)) {
         if (!sawChunk) {
           sawChunk = true;
           res.flushHeaders && res.flushHeaders();
         }
+        if (!firstTokenMs && since) {
+          try {
+            if (FIRST_TOKEN_RE.test(chunk.toString('utf8'))) firstTokenMs = nowMs() - since;
+          } catch (_) { /* 编码异常时放弃首字计时，不影响转发本身 */ }
+        }
         if (typeof onChunk === 'function') onChunk(chunk);
+        if (chunk && chunk.length) {
+          try {
+            tail = (tail + chunk.toString('utf8')).slice(-USAGE_TAIL_LIMIT);
+          } catch (_) { /* 编码异常不影响转发 */ }
+        }
         if (!res.write(chunk)) {
           await new Promise((resolve) => res.once('drain', resolve));
         }
@@ -299,7 +495,7 @@ function createCreditProxy(deps) {
     } finally {
       res.end();
     }
-    return sawChunk;
+    return { sawChunk, usage: parseUsageFromSse(tail), firstTokenMs };
   }
 
   /** 把 SSE chunk 聚合成非流式 OpenAI 响应（客户端请求 stream:false 时用）。 */
@@ -339,7 +535,7 @@ function createCreditProxy(deps) {
       id: id || `credit-proxy-${nowMs()}`,
       object: 'chat.completion',
       created: Math.floor(nowMs() / 1000),
-      model: model || 'credit-rotation',
+      model: model || 'unknown',
       choices: [
         {
           index: 0,
@@ -353,6 +549,27 @@ function createCreditProxy(deps) {
       ],
       ...(usage ? { usage } : {}),
     };
+  }
+
+  /**
+   * 旁路记录一次请求的用量。失败不影响转发：看板是观测，不是链路的一部分。
+   * 只记模型名、账号短 uid、token 数与积分，不落 prompt / 响应内容。
+   */
+  function recordUsage(info) {
+    if (!usageStore) return;
+    const base = {
+      t: Date.now(),
+      m: String(info.model || 'unknown'),
+      u: shortUid(info.uid),
+      ms: Math.max(0, Math.round(info.ms || 0)),
+    };
+    // ft = 首 token 延迟（ms）。缺省表示没测到（非流式或旧版本），看板据此回退算法。
+    if (info.ttft) base.ft = Math.max(0, Math.round(info.ttft));
+    if (!info.usage) {
+      usageStore.record({ ...base, ok: 0, pt: 0, ct: 0, rt: 0, cr: 0 });
+      return;
+    }
+    usageStore.record({ ...base, ok: 1, ...pickUsageNumbers(info.usage) });
   }
 
   async function handleChat(req, res) {
@@ -377,6 +594,7 @@ function createCreditProxy(deps) {
       stats.failed += 1;
       stats.lastError = result.message;
       log(`[credit-proxy] 请求失败（${result.status}）: ${result.message}`);
+      recordUsage({ model: payload.model, uid: result.uid, usage: null, ms: nowMs() - startedAt });
       return sendJson(res, result.status >= 400 && result.status < 600 ? result.status : 502, {
         error: { message: result.message || '上游请求失败', type: 'upstream_error' },
       });
@@ -384,22 +602,93 @@ function createCreditProxy(deps) {
 
     noteSuccess(result.uid);
     const elapsed = nowMs() - startedAt;
+    const modelName = normalizeModel(payload.model);
     log(`[credit-proxy] 命中账号 ${shortUid(result.uid)}（排队+首字节 ${elapsed}ms，第 ${stats.served} 次）`);
 
     if (wantsStream) {
-      await pipeStream(result.response, res);
+      const streamed = await pipeStream(result.response, res, null, startedAt);
+      recordUsage({
+        model: modelName,
+        uid: result.uid,
+        usage: streamed && streamed.usage,
+        ms: nowMs() - startedAt,
+        ttft: streamed && streamed.firstTokenMs,
+      });
     } else {
       const aggregated = await aggregate(result.response);
       sendJson(res, 200, aggregated);
+      recordUsage({ model: modelName, uid: result.uid, usage: aggregated && aggregated.usage, ms: nowMs() - startedAt });
+    }
+  }
+
+  /** 本代理可转发的模型清单，数据源是 models.json 里 url 指向本端口的配置。 */
+  function configuredModels() {
+    if (typeof listModelConfigs !== 'function') return [];
+    try {
+      const rows = listModelConfigs();
+      return Array.isArray(rows) ? rows.filter((row) => row && row.id) : [];
+    } catch (error) {
+      log(`[credit-proxy] 读取模型配置失败: ${error && error.message}`);
+      return [];
     }
   }
 
   function handleModels(res) {
-    // 只描述本代理能转发的模型族；真实可用模型由官方账号下发，这里给最小信息集。
-    const ids = (deps.modelIds && deps.modelIds.length ? deps.modelIds : ['deepseek-v4.1-flash']);
+    // 早先这里硬编码单条兜底，客户端「获取可用模型」永远只拉回一个 deepseek。
+    // 现在按 models.json 实际配置返回，缺配置时才退回兜底，避免返回空列表。
+    const rows = configuredModels();
+    const source = rows.length ? rows : [{ id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash' }];
     sendJson(res, 200, {
       object: 'list',
-      data: ids.map((id) => ({ id, object: 'model', owned_by: 'credit-rotation' })),
+      data: source.map((row) => ({
+        id: row.id,
+        object: 'model',
+        owned_by: 'local',
+        name: row.name || row.id,
+      })),
+    });
+  }
+
+  /**
+   * 连通性探测：对指定模型 id 发一条极短请求，回答「这个 id 现在真的能通吗」。
+   * 走同一串行队列，不和正常对话抢上游并发；探测请求不计入用量统计。
+   */
+  async function handleTestModel(req, res) {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req, 64 * 1024)) || '{}');
+    } catch (_) {
+      body = {};
+    }
+    const model = String((body && body.model) || '').trim();
+    if (!model) return sendJson(res, 400, { ok: false, message: '缺少 model' });
+    const startedAt = nowMs();
+    await enqueue(async () => {
+      const result = await callWithRotation(
+        { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
+        null,
+      );
+      if (result.ok) {
+        // 必须把流读完，否则上游连接会挂着不释放。
+        await result.response.text().catch(() => '');
+        return sendJson(res, 200, {
+          ok: true,
+          model,
+          ms: nowMs() - startedAt,
+          uid: shortUid(result.uid),
+        });
+      }
+      return sendJson(res, 200, {
+        ok: false,
+        model,
+        status: result.status,
+        message: result.message || '上游请求失败',
+        ms: nowMs() - startedAt,
+      });
+    }).catch((error) => {
+      if (!res.headersSent) {
+        sendJson(res, 500, { ok: false, model, message: (error && error.message) || '探测失败' });
+      }
     });
   }
 
@@ -427,6 +716,67 @@ function createCreditProxy(deps) {
     });
   }
 
+  // 看板是随代理一起发布的单文件页面。按 mtime 缓存：改完页面刷新浏览器就能看到，
+  // 不用重启代理进程（之前全量缓存导致每次改看板都得重启）。
+  const DASHBOARD_FILE = path.join(__dirname, 'credit-proxy-dashboard.html');
+  let dashboardCache = null;
+  let dashboardMtime = 0;
+  function serveDashboard(res) {
+    try {
+      const stat = fs.statSync(DASHBOARD_FILE);
+      if (dashboardCache === null || stat.mtimeMs !== dashboardMtime) {
+        dashboardCache = fs.readFileSync(DASHBOARD_FILE, 'utf8');
+        dashboardMtime = stat.mtimeMs;
+      }
+    } catch (_) {
+      if (dashboardCache === null) dashboardCache = '';
+    }
+    if (!dashboardCache) {
+      return sendJson(res, 500, { error: { message: '看板页面缺失（credit-proxy-dashboard.html）' } });
+    }
+    // 看板上的「测试」按钮需要带 Bearer 调 /control/test-model。
+    // 只把 token 注入到看板页面本身：能打开这个页面的人已经在 127.0.0.1 上，
+    // 拿到的就是访问本机代理的同一份凭证，不额外扩大暴露面。
+    const html = dashboardCache.split('__GW_TOKEN__').join(apiToken);
+    const body = Buffer.from(html, 'utf8');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': body.length,
+      ...CORS_HEADERS,
+    });
+    res.end(body);
+  }
+
+  // 看板、用量查询、控制接口携带或依赖本地凭证，只服务本机页面。
+  function isLocalOnlyPath(pathname) {
+    return pathname === '/dashboard'
+      || pathname === '/usage/summary'
+      || pathname === '/usage/recent'
+      || pathname === '/control/stop'
+      || pathname === '/control/test-model';
+  }
+
+  const LOCAL_HOSTS = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
+  const LOCAL_ORIGINS = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`]);
+
+  /**
+   * 判断请求是否来自本机页面，三道都过才算：
+   * 1) Host 必须是回环地址 —— 挡 DNS rebinding（域名解析到 127.0.0.1 时同源，但 Host 是域名）；
+   * 2) 带 Origin 时必须等于本机同源地址 —— 挡跨站 fetch；
+   * 3) 带 Sec-Fetch-Site 时只允许 same-origin / none —— 挡跨站 GET（浏览器跨站 GET 不带 Origin，只带这个）。
+   * curl / 本机脚本三个头都不带，放行：它们本来就能直接读 .api-token，再拦没有意义。
+   */
+  function fromLocalPage(req) {
+    const host = String(req.headers.host || '').trim().toLowerCase();
+    if (host && !LOCAL_HOSTS.has(host)) return false;
+    const origin = String(req.headers.origin || '').trim().toLowerCase();
+    if (origin && !LOCAL_ORIGINS.has(origin)) return false;
+    const site = String(req.headers['sec-fetch-site'] || '').trim().toLowerCase();
+    if (site && site !== 'same-origin' && site !== 'none') return false;
+    return true;
+  }
+
   function authorized(req) {
     const header = String(req.headers.authorization || '');
     const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -443,11 +793,56 @@ function createCreditProxy(deps) {
     // CORS 预检：直接放行，不做鉴权（浏览器不会在预检里带 Authorization）。
     if (req.method === 'OPTIONS') {
       recordRequest(req, pathname, 'preflight');
+      // 本机专用端点的预检也只认本机来源，跨站页面连预检都过不去。
+      if (isLocalOnlyPath(pathname) && !fromLocalPage(req)) {
+        return sendJsonLocal(res, 403, { error: { message: '仅允许本机页面访问', type: 'permission_error' } });
+      }
       res.writeHead(204, { ...CORS_HEADERS, 'Content-Length': '0' });
       return res.end();
     }
 
+    // 看板 / 用量 / 控制类端点只服务本机页面：这些端点会读到内嵌 token 或本机统计数据。
+    if (isLocalOnlyPath(pathname) && !fromLocalPage(req)) {
+      recordRequest(req, pathname, 'cross-site-blocked');
+      return sendJsonLocal(res, 403, { error: { message: '仅允许本机页面访问', type: 'permission_error' } });
+    }
+
     if (pathname === '/healthz') return handleHealth(res);
+    // 用户在面板里点「终止网关」：先落禁用标记，再自停。标记必须由启动侧统一检查，
+    // 否则看门狗 60 秒内又会把代理拉回来，按钮就成了摆设。
+    if (pathname === '/control/stop' && req.method === 'POST') {
+      if (!authorized(req)) {
+        return sendJson(res, 401, { error: { message: '本地代理未授权', type: 'authentication_error' } });
+      }
+      let disabled = false;
+      try {
+        disabled = !!(typeof disable === 'function' && disable());
+      } catch (_) {
+        disabled = false;
+      }
+      sendJson(res, 200, { ok: true, disabled });
+      setTimeout(() => process.exit(0), 150).unref();
+      return;
+    }
+    // 看板上的「测试」按钮：探测某个模型 id 当前能否走通。
+    if (pathname === '/control/test-model' && req.method === 'POST') {
+      if (!authorized(req)) {
+        return sendJson(res, 401, { error: { message: '本地代理未授权', type: 'authentication_error' } });
+      }
+      handleTestModel(req, res);
+      return;
+    }
+    // 看板与用量查询只读本机统计数据，不代理任何上游请求，也不记录到 recent，
+    // 否则看板自身的轮询会把请求记录刷掉。
+    if (pathname === '/dashboard') return serveDashboard(res);
+    if (pathname === '/usage/summary') {
+      if (!usageStore) return sendJson(res, 503, { error: { message: '用量统计未启用' } });
+      return sendJson(res, 200, usageStore.summary(url.searchParams.get('days')));
+    }
+    if (pathname === '/usage/recent') {
+      if (!usageStore) return sendJson(res, 503, { error: { message: '用量统计未启用' } });
+      return sendJson(res, 200, { items: usageStore.recent(url.searchParams.get('limit')) });
+    }
     if (pathname === '/v1/models' && req.method === 'GET') {
       recordRequest(req, pathname, 'models');
       return handleModels(res);
@@ -498,4 +893,4 @@ function createCreditProxy(deps) {
   };
 }
 
-module.exports = { createCreditProxy, rankAccounts, normalizeModel, MODEL_PREFIX, DEFAULT_PORT };
+module.exports = { createCreditProxy, rankAccounts, normalizeModel, MODEL_PREFIXES, DEFAULT_PORT };

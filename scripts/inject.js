@@ -10345,6 +10345,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-model-count" id="wbs-model-count"></span>' +
         '<span class="wbs-model-imports" id="wbs-model-imports"></span>' +
         '<span class="wbs-model-toolbar-spacer"></span>' +
+        '<span class="wbs-gw" id="wbs-gw"><span class="wbs-gw-dot"></span><span id="wbs-gw-text">网关检测中</span><button class="wbs-sess-bbtn" type="button" id="wbs-gw-toggle" style="display:none">启动</button></span>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-model-batch" style="display:none">批量管理</button>' +
         '<div class="wbs-model-batchbar" id="wbs-model-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-model-check-all" type="button" id="wbs-model-check-all">全选</button>' +
@@ -10360,6 +10361,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-modal-mask" id="wbs-model-edit" style="display:none"><div class="wbs-modal wbs-model-edit-modal"><div class="wbs-modal-title">编辑模型</div><div class="wbs-model-edit-form"><label class="wbs-model-edit-field"><span>自定义名称</span><input id="wbs-model-edit-name" type="text" autocomplete="off" placeholder="例如我的 DeepSeek"></label><label class="wbs-model-edit-field"><span>模型名</span><input id="wbs-model-edit-id" type="text" autocomplete="off" placeholder="例如 deepseek-v4-flash"></label><label class="wbs-model-edit-field"><span>URL</span><input id="wbs-model-edit-url" type="url" autocomplete="off"></label><label class="wbs-model-edit-field"><span>API Key</span><span class="wbs-model-secret-wrap"><input id="wbs-model-edit-key" type="password" autocomplete="off"><button class="wbs-model-eye" id="wbs-model-edit-eye" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg></button></span></label></div><div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" id="wbs-model-edit-cancel">取消</button><button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-model-edit-save">保存</button></div></div></div>';
       wireModelsPane();
       loadModels();
+      loadGatewayStatus();
     }
     // 前端脱敏：与后端 maskApiKey 一致。cell 列表展示短脱敏串，title 同样脱敏；编辑弹窗用明文原值
     function maskModelKey(apiKey) {
@@ -10425,6 +10427,62 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         updateModelCounts();
       });
     }
+    // 本地网关（47900）状态。自定义模型全部依赖它，所以要能一眼看到、一键启停。
+    var gatewayState = { listening: false, disabled: false, busy: false };
+
+    function renderGateway() {
+      if (!modelsPane) return;
+      var box = modelsPane.querySelector('#wbs-gw');
+      var text = modelsPane.querySelector('#wbs-gw-text');
+      var btn = modelsPane.querySelector('#wbs-gw-toggle');
+      if (!box || !text || !btn) return;
+      box.classList.toggle('on', !gatewayState.busy && gatewayState.listening);
+      box.classList.toggle('off', !gatewayState.busy && !gatewayState.listening);
+      box.classList.toggle('busy', !!gatewayState.busy);
+      if (gatewayState.busy) text.textContent = '处理中…';
+      else if (gatewayState.listening) text.textContent = '网关运行中';
+      else text.textContent = gatewayState.disabled ? '网关已终止' : '网关未启动';
+      btn.style.display = '';
+      btn.disabled = !!gatewayState.busy;
+      btn.textContent = gatewayState.listening ? '终止' : '启动';
+      btn.title = gatewayState.listening
+        ? '停止本地网关，自定义模型会立刻不可用'
+        : '启动本地网关（47900），恢复自定义模型';
+    }
+
+    function loadGatewayStatus() {
+      if (!modelsPane) return;
+      api('/api/credit-proxy/status').then(function (data) {
+        gatewayState.listening = !!data.listening;
+        gatewayState.disabled = !!data.disabled;
+        gatewayState.busy = false;
+        renderGateway();
+      }).catch(function () {
+        gatewayState.busy = false;
+        var text = modelsPane.querySelector('#wbs-gw-text');
+        if (text) text.textContent = '网关状态未知';
+      });
+    }
+
+    function toggleGateway() {
+      if (!modelsPane || gatewayState.busy) return;
+      var stopping = gatewayState.listening;
+      gatewayState.busy = true;
+      renderGateway();
+      api(stopping ? '/api/credit-proxy/stop' : '/api/credit-proxy/start', { method: 'POST' }).then(function (data) {
+        gatewayState.listening = !!data.listening;
+        gatewayState.disabled = !!data.disabled;
+        gatewayState.busy = false;
+        renderGateway();
+        if (stopping && gatewayState.listening) toast('网关未能终止，请重启客户端后重试', true, root);
+        else toast(stopping ? '网关已终止' : '网关已启动', false, root);
+      }).catch(function (e) {
+        gatewayState.busy = false;
+        renderGateway();
+        toast('操作失败：' + (e && e.message || e), true, root);
+      });
+    }
+
     function updateModelCounts() {
       if (!modelsPane) return;
       var officialCount = modelsPane.querySelector('#wbs-model-official-count');
@@ -10662,6 +10720,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
       });
       modelsPane.addEventListener('click', function (event) {
+        var gwToggle = event.target.closest ? event.target.closest('#wbs-gw-toggle') : null;
+        if (gwToggle) { toggleGateway(); return; }
         var clientImport = event.target.closest ? event.target.closest('#wbs-model-client-import') : null;
         if (clientImport && !clientImport.disabled) {
           var clientMenu = modelsPane.querySelector('#wbs-model-client-menu');
@@ -18314,6 +18374,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-model-tab-count{font-size:12px;opacity:.72;font-variant-numeric:tabular-nums}',
     '.wbs-model-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:7px}',
     '.wbs-model-toolbar-spacer{flex:1}',
+    '.wbs-gw{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--wb-color-text-secondary,#8a8f98);white-space:nowrap}',
+    '.wbs-gw-dot{width:7px;height:7px;border-radius:50%;background:#c2c6cc;flex:0 0 auto;transition:background .15s}',
+    '.wbs-gw.on .wbs-gw-dot{background:#22c55e}',
+    '.wbs-gw.off .wbs-gw-dot{background:#f59e0b}',
+    '.wbs-gw.busy .wbs-gw-dot{background:#3b82f6}',
     '.wbs-model-imports{display:flex;align-items:center;gap:5px;flex-wrap:wrap}',
     '.wbs-model-import:disabled{opacity:.5;cursor:not-allowed}',
     '.wbs-model-third-party,.wbs-model-client-import{position:relative;display:inline-flex}',

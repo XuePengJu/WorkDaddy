@@ -16,7 +16,8 @@ const path = require('node:path');
 
 const lib = require(path.join(__dirname, 'lib.js'));
 const { createAccountCreditCache } = require(path.join(__dirname, 'account-credit-cache.js'));
-const { createCreditProxy } = require(path.join(__dirname, 'credit-proxy.js'));
+const { createUsageStore } = require(path.join(__dirname, 'proxy-usage.js'));
+const { createCreditProxy, DEFAULT_PORT } = require(path.join(__dirname, 'credit-proxy.js'));
 
 function log(message) {
   process.stdout.write(`${new Date().toISOString()} ${message}\n`);
@@ -27,6 +28,27 @@ const dataDir = process.env.WBSWITCH_DATA_DIR
 const accountsDir = path.join(dataDir, 'accounts');
 const apiTokenFile = path.join(dataDir, '.api-token');
 const port = Number(process.env.WBSWITCH_CREDIT_PROXY_PORT) || 47900;
+// 用户在面板里主动终止网关后留下的标记。判断放在代理自己的入口，
+// 这样 daemon 看门狗、app 启动器（编译好的二进制）、手动执行，都拦得住。
+const disabledFile = path.join(dataDir, 'credit-proxy.disabled');
+
+function isDisabled() {
+  try {
+    return fs.existsSync(disabledFile);
+  } catch (_) {
+    return false;
+  }
+}
+
+function markDisabled() {
+  try {
+    fs.writeFileSync(disabledFile, `${new Date().toISOString()}\n`);
+    return true;
+  } catch (error) {
+    log(`[credit-proxy] 写禁用标记失败: ${error && error.message}`);
+    return false;
+  }
+}
 
 function readApiToken() {
   try {
@@ -91,12 +113,54 @@ function listAccounts() {
   }
 }
 
+/**
+ * 本代理能转发的模型清单：models.json 里 url 指向本机网关端口的那些。
+ * 必须按 url 过滤——同一份 models.json 里也可能存在直连第三方 API 的模型，
+ * 把它们算进「经网关可用」会误导看板。
+ * 端口同时接受「当前监听端口」和「默认端口」：配置里写的是 47900，
+ * 换端口跑（含隔离测试实例）时不该因此把全部配置过滤成空列表。
+ */
+function listModelConfigs() {
+  try {
+    const file = lib.workbuddyModelsFile();
+    const rows = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!Array.isArray(rows)) return [];
+    const selfPorts = new Set([String(port), String(DEFAULT_PORT)]);
+    return rows
+      .filter((row) => {
+        if (!row || !row.id) return false;
+        let parsed;
+        try {
+          parsed = new URL(String(row.url || ''));
+        } catch (_) {
+          return false;
+        }
+        if (parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return false;
+        const targetPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+        return selfPorts.has(String(targetPort));
+      })
+      .map((row) => ({ id: String(row.id), name: String(row.name || row.id) }));
+  } catch (error) {
+    log(`[credit-proxy] 读取模型配置失败: ${error && error.message}`);
+    return [];
+  }
+}
+
 function main() {
+  if (isDisabled()) {
+    log(`[credit-proxy] 已被用户终止（${disabledFile} 存在），本次不启动`);
+    process.exit(0);
+  }
+
   const apiToken = readApiToken();
   if (!apiToken) {
     log(`[credit-proxy] 未找到可用的本地 API token（${apiTokenFile}），启动中止`);
     process.exit(1);
   }
+
+  const usageStore = createUsageStore(dataDir);
+  const purged = usageStore.cleanup();
+  if (purged) log(`[credit-proxy] 清理过期用量记录 ${purged} 个文件`);
 
   const proxy = createCreditProxy({
     apiToken,
@@ -106,6 +170,9 @@ function main() {
     creditCache: createAccountCreditCache(dataDir),
     currentUid,
     getToken,
+    usageStore,
+    disable: markDisabled,
+    listModelConfigs,
   });
 
   proxy.start().then(
