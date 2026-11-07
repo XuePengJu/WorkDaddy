@@ -769,7 +769,12 @@
     });
   }
 
-  pick('refresh').addEventListener('click', load);
+  // 内嵌视图（embed=1，服务端不注入 token）由面板顶部的「刷新」重载整个 iframe，
+  // 效果与点页内刷新完全一致，所以这里把按钮去掉，避免同一动作出现两个入口。
+  // 独立打开（有 token）时保留：那里没有外层刷新可点。
+  var refreshBtn = pick('refresh');
+  if (!TOKEN && refreshBtn) { refreshBtn.remove(); refreshBtn = null; }
+  if (refreshBtn) refreshBtn.addEventListener('click', load);
   // 折叠组的展开/收起只切 hidden，不重建列表：重建会把正在飞的「测试中」按钮抹掉。
   function toggleGroup(head) {
     var key = head.dataset.group;
