@@ -537,8 +537,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
 // 1.2.72：积分代理补最低档思考——请求没带档位、带 null/空值、或写成关闭时落
 //         low，修「客户端思考配置存不住，于是永远不思考」。
-const DAEMON_VERSION = '1.2.77';
-const DAEMON_BUILD_ID = 'release-1.2.77-credit-proxy-error-codes';
+// 版本号 = 依赖的上游版本 + 自己的 beta 序号（上游 1.2.19 时我们出 1.2.19.beta1、.beta2…），
+// 这样既能一眼看出基于哪一版上游，又不会和上游的 1.2.2x 系列撞号。
+const DAEMON_VERSION = '1.2.19.beta1';
+const DAEMON_BUILD_ID = 'release-1.2.19.beta1-credit-proxy-error-codes';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({

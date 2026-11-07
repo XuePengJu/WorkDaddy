@@ -16,8 +16,10 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 
 VERSION="${WORKDADDY_BUILD_VERSION:-$(grep -o "DAEMON_VERSION = '[^']*'" scripts/daemon.js | head -1 | cut -d"'" -f2)}"
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "错误：发布版本必须是 x.y.z，实际为 ${VERSION}" >&2
+# 允许四段式：前 3 段必须是数字（对齐上游语义），第 4 段可带字母，
+# 用于「依赖上游版本 + 自己的 beta 号」这种标记，例如 1.2.19.beta1。
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9A-Za-z]+)?$ ]]; then
+  echo "错误：发布版本必须是 x.y.z 或 x.y.z.<beta号>，实际为 ${VERSION}" >&2
   exit 2
 fi
 APP="WorkDaddy.app"
@@ -470,12 +472,18 @@ with open(path, 'w', encoding='utf-8', newline='') as f:
     f.write(source)
 PY
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$PACKAGE_APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "$PACKAGE_APP/Contents/Info.plist"
+# CFBundleVersion（构建号）苹果要求逐段都是整数，不能出现 beta 这种字母段：
+# 四段式时把 beta 段数字化为 1.2.19.beta1 -> 1.2.19.1；三段式保持原值。
+BUNDLE_VERSION="$VERSION"
+if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.(beta)?([0-9]+)$ ]]; then
+  BUNDLE_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[3]}"
+fi
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUNDLE_VERSION}" "$PACKAGE_APP/Contents/Info.plist"
 # 无论源码壳当前版本如何，每次产物都必须让 daemon 版本与安装包版本一致。
 perl -0pi -e "s/(const DAEMON_VERSION = ')[^']+(';)/\${1}${VERSION}\${2}/" \
   "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"
-# 壳内可能残留旧的 release-x.y.z；只替换 Build ID 的版本段，保留日期/功能后缀。
-perl -0pi -e "s/(const DAEMON_BUILD_ID = 'release-)[0-9]+\\.[0-9]+\\.[0-9]+/\${1}${VERSION}/" \
+# 壳内可能残留旧的 release-x.y.z（或 x.y.z.betaN）；只替换 Build ID 的版本段，保留日期/功能后缀。
+perl -0pi -e "s/(const DAEMON_BUILD_ID = 'release-)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9A-Za-z]+)?/\${1}${VERSION}/" \
   "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"
 if ! grep -q "const DAEMON_VERSION = '${VERSION}';" "$PACKAGE_APP/Contents/Resources/scripts/daemon.js" \
   || ! grep -q "const DAEMON_BUILD_ID = 'release-${VERSION}-" "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"; then
