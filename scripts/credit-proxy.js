@@ -207,14 +207,35 @@ function isAccountLevelFailure(status) {
 // 所以按小写建一份索引做归一化，让配置里写成什么大小写都能落到上游认的写法。
 // 只纠正已知 id —— 上游新增的模型名不在表里时原样透传，避免误改。
 const UPSTREAM_MODEL_IDS = [
-  'deepseek-v4.1-flash', 'deepseek-v4-pro',
+  'deepseek-v4.1-flash', 'deepseek-v4-flash', 'deepseek-v4-pro',
   'glm-5.2', 'glm-5.3', 'glm-5.3-flash',
   'hy3', 'hy3-c', 'hy3-x', 'hy4-preview', 'hy4-preview-f',
-  'kimi-k2.7', 'mimo-v2.6-pro', 'minimax-m3', 'minimax-m3.1-flash',
+  'kimi-k2.7', 'kimi-k3.1-pro', 'mimo-v2.6-pro', 'minimax-m3', 'minimax-m3.1-flash',
   'space-bunny', 'step-5-preview',
   'auto', 'fast-model', 'balanced-model', 'deep-model',
 ];
 const CANONICAL_MODEL_ID = new Map(UPSTREAM_MODEL_IDS.map((id) => [id.toLowerCase(), id]));
+
+/**
+ * 看板「上游可用但未配置」那一组的唯一数据源。
+ *
+ * 上游没有模型列表接口（/v1/models、/v2/models 等一律 404 Route Not Found，已实测），
+ * 所以清单只能人工维护。放在网关这一侧，是为了避免它和 {@link UPSTREAM_MODEL_IDS}
+ * 两份手写表各写各的、越飘越远：新增模型只改这里 + 上面那张归一化表。
+ *
+ * 写法用大写的展示形式（与 models.json 里 DeepSeek-V4.1-Flash 的命名一致），
+ * 真正发请求前由 {@link normalizeModel} 转成上游认的小写形态。因此这里的每个 id
+ * 都必须能在 UPSTREAM_MODEL_IDS 里命中，否则会被原样透传、上游直接 400。
+ *
+ * 只保留常用系列：deepseek 全系、glm 全系、kimi 全系、minimax m3 及以上。
+ * hy / mimo / space-bunny / step-5-preview 等不在其中，不再出现在看板上。
+ */
+const ADDABLE_MODELS = [
+  'DeepSeek-V4.1-Flash', 'DeepSeek-V4-Pro', 'DeepSeek-V4-Flash',
+  'GLM-5.3-Flash', 'GLM-5.3', 'GLM-5.2',
+  'Kimi-K3.1-Pro', 'Kimi-K2.7',
+  'MiniMax-M3.1-Flash', 'MiniMax-M3',
+];
 
 function normalizeModel(model) {
   const value = String(model || '').trim();
@@ -226,6 +247,74 @@ function normalizeModel(model) {
     }
   }
   return CANONICAL_MODEL_ID.get(stripped.toLowerCase()) || stripped;
+}
+
+/**
+ * 各模型声明过的思考档位（与 WorkBuddy 官方客户端、DSH 渠道表逐条对齐）。
+ *
+ * 只给这里列出的模型补档位：上游对**不认识**的字段是宽容的，但对**不支持该
+ * 档位**的模型会直接 400，所以表外模型一律原样透传，绝不臆造一个它没声明的值。
+ */
+const REASONING_LADDERS = new Map([
+  ['deepseek-v4.1-flash', ['low', 'high', 'max']],
+  ['deepseek-v4-flash', ['low', 'high', 'max']],
+  ['deepseek-v4-pro', ['low', 'high', 'xhigh']],
+  ['glm-5.2', ['high', 'xhigh']],
+  ['glm-5.3', ['low', 'high', 'max']],
+  ['glm-5.3-flash', ['low', 'high', 'max']],
+  ['hy3', ['low', 'high']],
+  ['hy3-c', ['low', 'high']],
+  ['hy3-x', ['low', 'high']],
+  ['hy4-preview', ['high']],
+  ['kimi-k3.1-pro', ['low', 'high', 'max']],
+  ['minimax-m3.1-flash', ['low', 'medium', 'high', 'xhigh', 'max']],
+  ['space-bunny', ['low', 'medium', 'high', 'xhigh', 'max']],
+  ['step-5-preview', ['low', 'medium', 'high']],
+]);
+
+/** 表示「不要思考」的几种写法：它们不是强度，原样发出去上游也不认。 */
+const OFF_EFFORT_VALUES = new Set(['none', 'disabled', 'off', 'false', '0']);
+
+/**
+ * 给「说不上自己要不要思考」的调用方补一个最低档思考。
+ *
+ * ## 为什么必须补
+ *
+ * 上游这条车道里，`reasoning_effort` 才是思考的开关：不带档位的请求会被直接
+ * 按不思考应答（实测：只带 `thinking:{type:'enabled'}` 时 reasoning_content
+ * 恒为空）。而有的客户端 UI 保存不住思考配置，每轮都发不出档位，用户看到的
+ * 就是「明明配了思考，实际从来不思考」。既然不发等于关闭，这里就补最短的
+ * `low` —— 它真实生效、耗时和费用最低，比静默降级成不思考更接近调用方在 UI
+ * 上表达的意思。
+ *
+ * ## 边界
+ *
+ * - 调用方给了一个**本模型支持**的档位 → 原样保留，不猜、不升级；
+ * - 缺失、`null`、空串、`none`/`disabled`/`off` 等关闭写法，或本模型不支持的
+ *   档位 → 落最低档（`low`；该模型没声明 `low` 时退到它的第一档）；
+ * - 模型不在 {@link REASONING_LADDERS} 里 → 原样返回，一个字段都不加。
+ *
+ * @param {object} outgoing 即将发往上游的请求体（model 已归一化）
+ * @returns {object} 可能补过档位的请求体；不需要补时返回入参本身
+ */
+function withDefaultEffort(outgoing) {
+  const model = String(outgoing.model || '').toLowerCase();
+  const ladder = REASONING_LADDERS.get(model);
+  if (!ladder) return outgoing;
+  const requested = typeof outgoing.reasoning_effort === 'string'
+    ? outgoing.reasoning_effort.trim().toLowerCase()
+    : '';
+  const keep = requested !== '' && !OFF_EFFORT_VALUES.has(requested) && ladder.includes(requested);
+  const effort = keep ? requested : (ladder.includes('low') ? 'low' : ladder[0]);
+  const next = { ...outgoing, reasoning_effort: effort };
+  // deepseek 系还要求 thinking 与档位**同时**在场才算开思考；只给档位不给
+  // thinking 有效，但只给 thinking 无效，所以这里一并把开关摆正（调用方显式
+  // 关掉的情况也按上面的口径重新打开）。
+  if (/^deepseek/.test(model)) {
+    next.thinking = { type: 'enabled' };
+    delete next.enable_thinking;
+  }
+  return next;
 }
 
 /**
@@ -398,13 +487,13 @@ function createCreditProxy(deps) {
     const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
     try {
       // 官方网关只接受流式请求；客户端要非流式时由本模块聚合。
-      const outgoing = {
+      const outgoing = withDefaultEffort({
         ...payload,
         model: normalizeModel(payload.model),
         // 顺序：先把 developer 降级成 system，再抹客户端指纹（两步都不改其它字段）。
         messages: scrubMessages(downgradeDeveloperRole(payload.messages)),
         stream: true,
-      };
+      });
       dumpDebug('outgoing', outgoing);
       const response = await fetch(`${upstreamOrigin}${UPSTREAM_PATH}`, {
         method: 'POST',
@@ -730,6 +819,8 @@ function createCreditProxy(deps) {
         remaining: row.remaining,
         expiresAt: row.expiresAt,
       })),
+      // 看板据此渲染「上游可用但未配置」分组，前端不再自己维护一份清单。
+      addableModels: ADDABLE_MODELS.filter((id) => CANONICAL_MODEL_ID.has(id.toLowerCase())),
     });
   }
 
@@ -910,4 +1001,4 @@ function createCreditProxy(deps) {
   };
 }
 
-module.exports = { createCreditProxy, rankAccounts, normalizeModel, MODEL_PREFIXES, DEFAULT_PORT };
+module.exports = { createCreditProxy, rankAccounts, normalizeModel, withDefaultEffort, MODEL_PREFIXES, DEFAULT_PORT };

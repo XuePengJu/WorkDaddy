@@ -71,17 +71,38 @@
   section h2 { font-size: 13px; font-weight: 650; margin: 0 0 14px; color: var(--text); display: flex; justify-content: space-between; align-items: baseline; }
   section h2 .note { font-weight: 400; font-size: 11px; color: var(--faint); }
 
-  .chart { display: flex; align-items: flex-end; gap: 10px; height: 132px; padding-top: 8px; }
-  .col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
-  .col .stack { width: 100%; max-width: 46px; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
-  .col .seg { border-radius: 3px; min-height: 1px; }
-  .col .seg.in { background: var(--bar); }
-  .col .seg.out { background: var(--accent); }
-  .col .day { font-size: 10px; color: var(--faint); white-space: nowrap; }
-  .col .num { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .col.today .day { color: var(--accent); font-weight: 600; }
+  /* 折线图：输入走左轴、输出走右轴。两者量级差两个数量级，同轴会把输出压成贴底直线。 */
+  .chart { position: relative; height: 176px; }
+  .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .chart .grid line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 4; }
+  .chart .axis text { fill: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .chart .axis-l text { text-anchor: end; }
+  .chart .axis-r text { text-anchor: start; }
+  .chart .xlab { fill: var(--faint); font-size: 10px; text-anchor: middle; white-space: nowrap; }
+  .chart .xlab.today { fill: var(--accent); font-weight: 600; }
+  .chart .line-in { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .line-out { fill: none; stroke: var(--warn); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .area-in { fill: var(--accent); fill-opacity: .08; }
+  .chart .pt { fill: var(--card); stroke-width: 1.6; }
+  .chart .pt.in { stroke: var(--accent); }
+  .chart .pt.out { stroke: var(--warn); }
+  .chart .hit { fill: transparent; }
+  .chart .vline { stroke: var(--faint); stroke-opacity: .5; stroke-width: 1; stroke-dasharray: 3 3; }
+  .chart-tip {
+    position: absolute; z-index: 2; pointer-events: none; opacity: 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
+    padding: 6px 9px; font-size: 11px; line-height: 1.5; color: var(--text);
+    white-space: nowrap; transition: opacity .12s;
+  }
+  .chart-tip.show { opacity: 1; }
+  .chart-tip b { font-weight: 650; }
+  .chart-tip .r { color: var(--muted); font-variant-numeric: tabular-nums; }
   .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: var(--muted); }
-  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 6px; vertical-align: middle; }
+  .legend i.in { background: var(--accent); }
+  .legend i.out { background: var(--warn); }
+  .legend .ax { color: var(--faint); }
 
   .models .row { display: grid; grid-template-columns: 150px 1fr 68px 78px; gap: 12px; align-items: center; padding: 7px 0; font-size: 12px; }
   .models .row + .row { border-top: 1px solid var(--border); }
@@ -94,6 +115,18 @@
   .mlist .grp { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--faint); padding: 10px 0 2px; }
   .mlist .grp:first-child { padding-top: 0; }
   .mlist .grp .note { font-size: 11px; color: var(--faint); }
+  /* 未配置那组默认收起：12 行「未配置」把已配置的模型挤到很下面。 */
+  .mlist .grp.toggle { cursor: pointer; user-select: none; }
+  .mlist .grp.toggle:hover { color: var(--muted); }
+  .mlist .grp.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .mlist .grp .caret {
+    align-self: center; flex: 0 0 auto; width: 0; height: 0;
+    border-left: 6px solid currentColor; border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent;
+    transition: transform .12s ease;
+  }
+  .mlist .grp.open .caret { transform: rotate(90deg); }
+  .mlist .grp .gcount { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .mlist .grp-body[hidden] { display: none; }
   .mlist .mrow { display: grid; grid-template-columns: 12px minmax(110px, 180px) 1fr 54px 62px 66px; gap: 10px; align-items: center; padding: 7px 0; font-size: 12px; }
   .mlist .mrow + .mrow { border-top: 1px solid var(--border); }
   .mlist .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
@@ -168,8 +201,8 @@
     <h2>近 7 天 token 趋势 <span class="note" id="range"></span></h2>
     <div class="chart" id="chart"></div>
     <div class="legend">
-      <span><i style="background:var(--bar)"></i>输入</span>
-      <span><i style="background:var(--accent)"></i>输出</span>
+      <span><i class="in"></i>输入 <span class="ax">左轴</span></span>
+      <span><i class="out"></i>输出 <span class="ax">右轴</span></span>
     </div>
   </section>
 
@@ -201,13 +234,10 @@
   var BASE = 'http://127.0.0.1:47900';
   // 由代理在响应 /dashboard 时注入，只用于「测试」按钮调用本机控制接口。
   var TOKEN = '__GW_TOKEN__';
-  // 上游接过、但 models.json 里还没配的模型 id。上游没有模型列表接口，
-  // 这份清单只能手动维护；发现新的在这里补一行即可。
-  var EXTRA_MODELS = [
-    'glm-5.2', 'hy3', 'hy3-c', 'hy3-x', 'hy4-preview', 'hy4-preview-f',
-    'kimi-k2.7', 'mimo-v2.6-pro', 'minimax-m3', 'minimax-m3.1-flash',
-    'space-bunny', 'step-5-preview'
-  ];
+  // 上游接过、但 models.json 里还没配的模型 id。清单由网关 /healthz 的
+  // addableModels 下发（上游没有模型列表接口，只能在网关侧 credit-proxy.js 里维护）。
+  // 这里默认空：网关还是旧进程时这一组直接不显示，不拿一份过期清单糊弄人。
+  var ADDABLE_MODELS = [];
   var configuredModels = [];
   // 小写 id -> 配置里写的大写形式。上游会归一化成小写存用量，展示时换回配置的写法。
   var modelDisplay = {};
@@ -215,6 +245,18 @@
   var probeResults = {};
   // 正在探测的模型：探测期间不重建列表，否则「测试中」的按钮会被抹掉。
   var probing = {};
+  // 「上游可用但未配置」那一组的展开状态。默认收起：十几行「未配置」会把
+  // 真正要看的已配置模型挤到很下面。轮询重建时靠这个变量保住展开状态。
+  var extrasOpen = false;
+  // 账号短 uid（8 位前缀）→ 昵称。数据来自 /healthz 的候选账号，纯前端映射，
+  // 因此改完只刷新页面即可生效，不必重启代理进程。
+  // 看板对外只显示昵称：短 uid 对使用者没有意义，也不该出现在展示层。
+  var accountNames = {};
+  var accountLabel = function (shortId) {
+    var key = String(shortId || '');
+    if (!key) return '—';
+    return accountNames[key] || '—';
+  };
   var num = function (n) {
     n = Number(n) || 0;
     return n.toLocaleString('zh-CN');
@@ -245,35 +287,148 @@
     pick('k-reasoning').textContent = (t.reasoning ? ('思考 ' + num(t.reasoning)) : '不含思考') + (t.tokps ? (' · 均速 ' + t.tokps + ' tok/s') : '');
     pick('k-credit').textContent = money(t.credit);
 
-    // 趋势图：柱高按输入+输出归一，最少 2px 保证空白日也可见
+    // 趋势图：输入走左轴、输出走右轴。两条线各按自己的最大值归一 ——
+    // 输入是千万~亿级、输出是十万级，共用一根轴会把输出压成贴底直线。
     var daily = s.daily || [];
-    var max = 0;
-    daily.forEach(function (d) { max = Math.max(max, (d.prompt || 0) + (d.completion || 0)); });
-    var todayKey = t.date;
-    var host = pick('chart');
-    host.innerHTML = '';
-    daily.forEach(function (d) {
-      var total = (d.prompt || 0) + (d.completion || 0);
-      var h = max > 0 ? (total / max) * 100 : 0;
-      var inShare = total > 0 ? ((d.prompt || 0) / total) * 100 : 100;
-      var col = document.createElement('div');
-      col.className = 'col' + (d.date === todayKey ? ' today' : '');
-      col.title = d.date + '　输入 ' + num(d.prompt) + '　输出 ' + num(d.completion) + '　积分 ' + money(d.credit);
-      col.innerHTML =
-        '<div class="num">' + (total ? num(total) : '') + '</div>' +
-        '<div class="stack" style="height:' + Math.max(h, total ? 3 : 0) + '%">' +
-          '<div class="seg in" style="flex:0 0 ' + inShare + '%"></div>' +
-          '<div class="seg out" style="flex:1 1 auto"></div>' +
-        '</div>' +
-        '<div class="day">' + d.date.slice(5) + '</div>';
-      host.appendChild(col);
-    });
+    lastTrend = { daily: daily, todayKey: t.date };
+    renderTrend();
     if (daily.length) {
       pick('range').textContent = daily[0].date + ' ~ ' + daily[daily.length - 1].date;
     }
 
     renderModels(configuredModels, s.byModel);
   }
+
+  // 最近一次的趋势数据：窗口尺寸变化时用它重绘，不必等下一次轮询。
+  var lastTrend = null;
+  var trendResizeTimer = null;
+
+  // 轴上数值统一走「亿 / 万」，最多 5 个字符，免得左右轴标签把绘图区挤窄。
+  function axisNum(v) {
+    v = Number(v) || 0;
+    if (v >= 1e8) {
+      var yi = v / 1e8;
+      return (yi >= 10 ? Math.round(yi) : Math.round(yi * 10) / 10) + '亿';
+    }
+    if (v >= 1e4) return Math.round(v / 1e4) + '万';
+    return String(Math.round(v));
+  }
+
+  // 把最大值抬到 1/2/5 × 10^n，让刻度落在整档上（453M → 5亿）。
+  function niceMax(v) {
+    if (!(v > 0)) return 0;
+    var p = Math.pow(10, Math.floor(Math.log10(v)));
+    var f = v / p;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+  }
+
+  function renderTrend() {
+    if (!lastTrend) return;
+    var host = pick('chart');
+    if (!host) return;
+    var daily = lastTrend.daily || [];
+    var n = daily.length;
+    var W = host.clientWidth || 640;
+    var H = host.clientHeight || 176;
+    var pad = { top: 14, right: 48, bottom: 24, left: 50 };
+    var plotW = Math.max(20, W - pad.left - pad.right);
+    var plotH = Math.max(20, H - pad.top - pad.bottom);
+    var baseY = pad.top + plotH;
+
+    var rawIn = 0, rawOut = 0;
+    daily.forEach(function (d) {
+      rawIn = Math.max(rawIn, d.prompt || 0);
+      rawOut = Math.max(rawOut, d.completion || 0);
+    });
+    var maxIn = niceMax(rawIn);
+    var maxOut = niceMax(rawOut);
+    var step = n > 1 ? plotW / (n - 1) : 0;
+    var X = function (i) { return pad.left + i * step; };
+    var Y = function (v, max) { return baseY - plotH * (max > 0 ? Math.min(1, (v || 0) / max) : 0); };
+
+    var g = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">';
+    var ticks = [0, .5, 1];
+    g += '<g class="grid">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<line x1="' + pad.left + '" y1="' + y + '" x2="' + (pad.left + plotW) + '" y2="' + y + '"/>';
+    });
+    g += '</g>';
+    g += '<g class="axis axis-l">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<text x="' + (pad.left - 8) + '" y="' + (y + 3.5) + '">' + axisNum(maxIn * r) + '</text>';
+    });
+    g += '</g>';
+    g += '<g class="axis axis-r">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<text x="' + (pad.left + plotW + 8) + '" y="' + (y + 3.5) + '">' + axisNum(maxOut * r) + '</text>';
+    });
+    g += '</g>';
+
+    if (n) {
+      var inPts = daily.map(function (d, i) { return X(i) + ',' + Y(d.prompt, maxIn); });
+      var outPts = daily.map(function (d, i) { return X(i) + ',' + Y(d.completion, maxOut); });
+      // 面积只铺在输入线下面，两条面积叠加会发糊。
+      if (n > 1) {
+        g += '<path class="area-in" d="M' + X(0) + ',' + baseY + ' L' + inPts.join(' L') + ' L' + X(n - 1) + ',' + baseY + ' Z"/>';
+      }
+      g += '<path class="line-out" d="M' + outPts.join(' L') + '"/>';
+      g += '<path class="line-in" d="M' + inPts.join(' L') + '"/>';
+      daily.forEach(function (d, i) {
+        var r = d.date === lastTrend.todayKey ? 3.4 : 2.4;
+        g += '<circle class="pt in" cx="' + X(i) + '" cy="' + Y(d.prompt, maxIn) + '" r="' + r + '"/>';
+        g += '<circle class="pt out" cx="' + X(i) + '" cy="' + Y(d.completion, maxOut) + '" r="' + r + '"/>';
+      });
+      daily.forEach(function (d, i) {
+        g += '<text class="xlab' + (d.date === lastTrend.todayKey ? ' today' : '') + '" x="' + X(i) + '" y="' + (H - 5) + '">' + d.date.slice(5) + '</text>';
+      });
+    }
+    g += '<line class="vline" x1="0" y1="' + pad.top + '" x2="0" y2="' + baseY + '" style="opacity:0"/>';
+    g += '</svg>';
+    // 折线没有柱子的「高度」可比，具体数值靠 hover 给。
+    g += '<div class="chart-tip"></div>';
+    host.innerHTML = g;
+
+    var tip = host.querySelector('.chart-tip');
+    var vline = host.querySelector('.vline');
+    host.onmousemove = function (ev) {
+      if (!n) return;
+      var box = host.getBoundingClientRect();
+      var mx = ev.clientX - box.left;
+      var i = step > 0 ? Math.round((mx - pad.left) / step) : 0;
+      i = Math.max(0, Math.min(n - 1, i));
+      var d = daily[i];
+      var cx = X(i);
+      vline.setAttribute('x1', cx);
+      vline.setAttribute('x2', cx);
+      vline.style.opacity = '1';
+      tip.innerHTML = '<b>' + d.date + '</b><br>' +
+        '<span class="r">输入</span> ' + num(d.prompt) + '<br>' +
+        '<span class="r">输出</span> ' + num(d.completion) + '<br>' +
+        '<span class="r">积分</span> ' + money(d.credit);
+      tip.classList.add('show');
+      // 贴着当天两条线的较高点显示，默认放下方，贴到下边界再翻到上方，
+      // 避免提示框压住峰值那段折线。
+      var tw = tip.offsetWidth;
+      var th = tip.offsetHeight;
+      var yDot = Math.min(Y(d.prompt, maxIn), Y(d.completion, maxOut));
+      var top = yDot + 14;
+      if (top + th > H - 4) top = Math.max(0, yDot - th - 14);
+      tip.style.left = Math.max(0, Math.min(W - tw, cx - tw / 2)) + 'px';
+      tip.style.top = top + 'px';
+    };
+    host.onmouseleave = function () {
+      tip.classList.remove('show');
+      vline.style.opacity = '0';
+    };
+  }
+
+  window.addEventListener('resize', function () {
+    clearTimeout(trendResizeTimer);
+    trendResizeTimer = setTimeout(renderTrend, 120);
+  });
 
   // 「模型」区块：已配置的（走本网关）+ 上游可用但没配的，两边都能单独测连通性。
   function renderModels(configured, byModel) {
@@ -290,17 +445,40 @@
       ids[shortModel(m.id).toLowerCase()] = true;
       return { id: shortModel(m.id), name: m.name || '', pending: false };
     });
-    var extras = EXTRA_MODELS.filter(function (id) { return !ids[id.toLowerCase()]; }).map(function (id) {
+    var extras = ADDABLE_MODELS.filter(function (id) { return !ids[id.toLowerCase()]; }).map(function (id) {
       return { id: id, name: '未配置', pending: true };
     });
     pick('model-note').textContent = rows.length + ' 个已配置 · ' + extras.length + ' 个可添加';
 
-    function group(label, hint, items) {
+    function group(label, hint, items, opts) {
       if (!items.length) return;
+      var collapsible = !!(opts && opts.collapsible);
       var head = document.createElement('div');
-      head.className = 'grp';
-      head.innerHTML = label + (hint ? ' <span class="note">' + hint + '</span>' : '');
+      head.className = 'grp' + (collapsible ? ' toggle' : '') + (collapsible && extrasOpen ? ' open' : '');
+      if (collapsible) {
+        head.dataset.group = opts.key;
+        head.tabIndex = 0;
+        head.setAttribute('role', 'button');
+        head.setAttribute('aria-expanded', extrasOpen ? 'true' : 'false');
+      }
+      head.innerHTML =
+        (collapsible ? '<span class="caret"></span>' : '') +
+        label +
+        (hint ? ' <span class="note">' + hint + '</span>' : '') +
+        (collapsible ? '<span class="gcount">' + items.length + '</span>' : '');
       host.appendChild(head);
+
+      // 折叠组的行单独包一层：展开/收起只切 hidden，不重建 DOM，
+      // 否则正在飞的「测试中」按钮会被抹掉。
+      var body = null;
+      if (collapsible) {
+        body = document.createElement('div');
+        body.className = 'grp-body';
+        body.dataset.group = opts.key;
+        body.hidden = !extrasOpen;
+        host.appendChild(body);
+      }
+      var rowHost = body || host;
       items.forEach(function (item) {
         var stat = used[item.id.toLowerCase()];
         var cached = probeResults[item.id];
@@ -324,11 +502,11 @@
         } else if (stat) {
           row.title = '今日 请求 ' + stat.requests + '　输入 ' + num(stat.prompt) + '　输出 ' + num(stat.completion);
         }
-        host.appendChild(row);
+        rowHost.appendChild(row);
       });
     }
     group('已配置 · 走本网关', '', rows);
-    group('上游可用但未配置', '把 id 填进 models.json 即可用', extras);
+    group('上游可用但未配置', '把 id 填进 models.json 即可用', extras, { collapsible: true, key: 'extras' });
   }
 
   // 单个模型连通性探测：极短请求确认这个 id 现在真能通，失败时保留上游原话。
@@ -360,7 +538,7 @@
       if (d && d.ok) {
         var ms = Number(d.ms) || 0;
         finish(true, ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms',
-          '连通正常 · 账号 ' + (d.uid || '—') + ' · ' + ms + 'ms');
+          '连通正常 · 账号 ' + accountLabel(d.uid) + ' · ' + ms + 'ms');
       } else {
         finish(false, '失败', (d && (d.message || ('HTTP ' + d.status))) || '探测失败');
       }
@@ -409,7 +587,7 @@
       tr.innerHTML =
         '<td>' + clock(r.t) + '</td>' +
         '<td class="model"><span class="pill">' + displayModel(r.m) + '</span></td>' +
-        '<td>' + (r.u || '—') + '</td>' +
+        '<td>' + accountLabel(r.u) + '</td>' +
         '<td class="num">' + (failed ? '—' : num(r.pt)) + '</td>' +
         '<td class="num">' + (failed ? '—' : num(r.ct)) + '</td>' +
         '<td class="num" title="' + sp.title + '">' + (failed ? '—' : sp.text) + '</td>' +
@@ -432,8 +610,15 @@
     Promise.all([
       fetch(BASE + '/usage/summary?days=7').then(function (r) { return r.json(); }),
       fetch(BASE + '/usage/recent?limit=20').then(function (r) { return r.json(); }),
-      fetch(BASE + '/v1/models').then(function (r) { return r.json(); })
+      fetch(BASE + '/v1/models').then(function (r) { return r.json(); }),
+      // 账号昵称映射：失败时退化成全部显示「—」，不能连累主数据加载。
+      fetch(BASE + '/healthz').then(function (r) { return r.json(); }).catch(function () { return null; })
     ]).then(function (res) {
+      ((res[3] && res[3].candidates) || []).forEach(function (c) {
+        if (c && c.uid) accountNames[String(c.uid)] = c.nickname || '未命名账号';
+      });
+      // 「可添加」清单跟着网关走：这里是它唯一的取数入口。
+      ADDABLE_MODELS = ((res[3] && res[3].addableModels) || []).slice();
       configuredModels = ((res[2] && res[2].data) || []).slice();
       modelDisplay = {};
       configuredModels.forEach(function (m) {
@@ -448,13 +633,32 @@
   }
 
   pick('refresh').addEventListener('click', load);
+  // 折叠组的展开/收起只切 hidden，不重建列表：重建会把正在飞的「测试中」按钮抹掉。
+  function toggleGroup(head) {
+    var key = head.dataset.group;
+    var open = head.classList.toggle('open');
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var body = pick('models').querySelector('.grp-body[data-group="' + key + '"]');
+    if (body) body.hidden = !open;
+    if (key === 'extras') extrasOpen = open;
+  }
   // 测试按钮用事件委托：列表每次刷新都会重建，直接绑在行上会丢监听。
   pick('models').addEventListener('click', function (event) {
+    var head = event.target.closest ? event.target.closest('.grp.toggle') : null;
+    if (head) { toggleGroup(head); return; }
     var btn = event.target.closest ? event.target.closest('.mtest') : null;
     if (!btn || btn.disabled) return;
     var row = btn.closest('.mrow');
     if (!row || !row.dataset.model) return;
     probeModel(row.dataset.model, btn, row);
+  });
+  // 键盘同样能开合：标题行 tabindex=0 + role=button，回车/空格切换。
+  pick('models').addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var head = event.target.closest ? event.target.closest('.grp.toggle') : null;
+    if (!head) return;
+    event.preventDefault();
+    toggleGroup(head);
   });
   load();
   setInterval(load, 10000);
