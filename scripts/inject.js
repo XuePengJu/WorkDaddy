@@ -1826,6 +1826,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
     '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
     '积分未查询': 'Credits not queried', '上次查询：': 'Last checked: ', '刷新积分': 'Refresh credits', '刷新失败': 'Refresh failed',
+    '网关': 'Gateway', '浏览器打开': 'Open in browser', '网关运行中': 'Gateway running', '网关未启动': 'Gateway not running', '网关已终止': 'Gateway stopped', '网关检测中': 'Checking gateway', '网关状态未知': 'Gateway status unknown', '正在连接网关…': 'Connecting to gateway…',
+    '网关已终止，点上方「启动」重新开启': 'Gateway stopped. Use Start above to resume.', '网关未启动，点上方「启动」开启': 'Gateway is not running. Use Start above.', '网关状态未知，可点上方「刷新」重试': 'Gateway status unknown. Use Refresh above to retry.',
     '账号切换': 'Account switch', '切换账号': 'Switch account', '读取账号中…': 'Loading accounts…', '暂无已备份账号': 'No backed-up accounts yet',
     '正在切换到': 'Switching to', '切换失败：': 'Switch failed: ', '读取失败：': 'Load failed: ', '24小时过期：': 'Expires in 24h: ', '近7天过期：': 'Expires in 7 days: ', '积分：无限': 'Credits: unlimited',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
@@ -4234,6 +4236,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<button class="wbs-tab" type="button" data-tab="theme"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10c0-1.5-1-2-2-2h-3a2 2 0 0 1-2-2c0-1.5 1-2 1-2h2c0-3-2-4-6-4z"/><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/></svg><span>主题</span></button>',
       '<button class="wbs-tab" type="button" data-tab="sessions"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>会话</span></button>',
       '<button class="wbs-tab" type="button" data-tab="models"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>模型</span></button>',
+      '<button class="wbs-tab" type="button" data-tab="gateway"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13m0 0-3-3m3 3-3 3"/><path d="M20 17H7m0 0 3-3m-3 3 3 3"/></svg><span>网关</span></button>',
       '<button class="wbs-tab" type="button" data-tab="enhance"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>增强</span></button>',
       '<button class="wbs-tab" type="button" data-tab="automations">' + AUTO_TAB_SVG + '<span>自动化</span></button>',
       '<button class="wbs-tab" type="button" data-tab="pc"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>电脑</span></button>',
@@ -4244,6 +4247,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-pane" data-pane="theme"></div>',
       '<div class="wbs-pane" data-pane="sessions"></div>',
       '<div class="wbs-pane" data-pane="models"></div>',
+      '<div class="wbs-pane" data-pane="gateway"></div>',
       '<div class="wbs-pane" data-pane="enhance"></div>',
       '<div class="wbs-pane" data-pane="automations"></div>',
       '<div class="wbs-pane" data-pane="pc"></div>',
@@ -7237,6 +7241,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var automationPane = root.querySelector('[data-pane="automations"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
+    var gatewayPane = root.querySelector('[data-pane="gateway"]');
     var hiddenToolsUnlocked = false;
     var logoutBtn = root.querySelector('[data-act="logout"]');
     var statusPopover = null;
@@ -9279,6 +9284,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       else if (name === 'automations' && automationPane && automationPane.__wbsRefreshDiscovery) automationPane.__wbsRefreshDiscovery();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
+      if (name === 'gateway' && gatewayPane) {
+        if (!gatewayPane.dataset.built) buildGatewayPane();
+        else refreshGatewayFrame();
+      }
       if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
     }
     var tabBtns = root.querySelectorAll('.wbs-tab');
@@ -11096,6 +11105,89 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // 本地网关（47900）状态。自定义模型全部依赖它，所以要能一眼看到、一键启停。
     var gatewayState = { listening: false, disabled: false, busy: false };
 
+    // ===== 网关 pane：一级入口，内嵌本地网关（47900）看板 =====
+    // 看板由网关自己 serve，所以这里只做容器与状态灯；启停走 daemon 的 /api/credit-proxy/*，
+    // 与「模型」页工具栏里的开关共用同一份 gatewayState，任一处操作两处同步。
+    var GATEWAY_ORIGIN = 'http://127.0.0.1:47900';
+
+    function gatewayFrameUrl() { return GATEWAY_ORIGIN + '/dashboard?embed=1&_=' + Date.now(); }
+
+    function gatewayPaneMessage(message) {
+      var wrap = gatewayPane && gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      if (wrap) wrap.innerHTML = '<div class="wbs-empty">' + esc(message) + '</div>';
+    }
+
+    /** 与模型页工具栏里的状态灯保持同一份状态；pane 未构建时静默跳过。 */
+    function renderGatewayPaneChrome() {
+      if (!gatewayPane || !gatewayPane.dataset.built) return;
+      var box = gatewayPane.querySelector('#wbs-gw-pane-state');
+      var text = gatewayPane.querySelector('#wbs-gw-pane-text');
+      var btn = gatewayPane.querySelector('#wbs-gw-pane-toggle');
+      if (!box || !text || !btn) return;
+      box.classList.toggle('on', !gatewayState.busy && gatewayState.listening);
+      box.classList.toggle('off', !gatewayState.busy && !gatewayState.listening);
+      box.classList.toggle('busy', !!gatewayState.busy);
+      if (gatewayState.busy) text.textContent = '处理中…';
+      else if (gatewayState.listening) text.textContent = '网关运行中';
+      else text.textContent = gatewayState.disabled ? '网关已终止' : '网关未启动';
+      btn.style.display = '';
+      btn.disabled = !!gatewayState.busy;
+      btn.textContent = gatewayState.listening ? '终止' : '启动';
+    }
+
+    /** iframe 高度对齐面板可用高度：面板固定 650px，避免小屏时溢出或留白。 */
+    function syncGatewayFrameHeight() {
+      if (!gatewayPane) return;
+      var wrap = gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      var body = root.querySelector('.wbs-body');
+      if (!wrap || !body) return;
+      var available = body.clientHeight - (gatewayPane.querySelector('.wbs-gw-bar') ? gatewayPane.querySelector('.wbs-gw-bar').offsetHeight : 0) - 20;
+      if (available > 120) wrap.style.height = available + 'px';
+    }
+
+    /** 依据 gatewayState 决定 pane 内显示 iframe 还是空状态；已存在则只重载，避免重建丢滚动位置。 */
+    function refreshGatewayFrame() {
+      if (!gatewayPane || !gatewayPane.dataset.built) return;
+      var wrap = gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      if (!wrap) return;
+      syncGatewayFrameHeight();
+      if (!gatewayState.listening) {
+        gatewayPaneMessage(gatewayState.disabled ? '网关已终止，点上方「启动」重新开启' : '网关未启动，点上方「启动」开启');
+        return;
+      }
+      var frame = wrap.querySelector('iframe');
+      if (frame) { frame.src = gatewayFrameUrl(); return; }
+      wrap.innerHTML = '<iframe class="wbs-gw-frame" src="' + gatewayFrameUrl() + '" title="网关看板" referrerpolicy="no-referrer"></iframe>';
+    }
+
+    function buildGatewayPane() {
+      if (!gatewayPane) return;
+      gatewayPane.dataset.built = '1';
+      gatewayPane.innerHTML =
+        '<div class="wbs-gw-pane">' +
+        '<div class="wbs-gw-bar">' +
+        '<span class="wbs-gw" id="wbs-gw-pane-state"><span class="wbs-gw-dot"></span><span id="wbs-gw-pane-text">网关检测中</span></span>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-toggle" style="display:none">启动</button>' +
+        '<span class="wbs-gw-bar-spacer"></span>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-reload">刷新</button>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-browser">浏览器打开</button>' +
+        '</div>' +
+        '<div class="wbs-gw-frame-wrap" id="wbs-gw-frame-wrap"><div class="wbs-empty">正在连接网关…</div></div>' +
+        '</div>';
+      var toggle = gatewayPane.querySelector('#wbs-gw-pane-toggle');
+      if (toggle) toggle.onclick = function () { toggleGateway(); };
+      var reload = gatewayPane.querySelector('#wbs-gw-pane-reload');
+      if (reload) reload.onclick = function () { loadGatewayStatus(); };
+      var browser = gatewayPane.querySelector('#wbs-gw-pane-browser');
+      if (browser) {
+        browser.onclick = function () {
+          try { window.open(GATEWAY_ORIGIN + '/dashboard', '_blank'); }
+          catch (_) { toast('无法打开浏览器，请手动访问 ' + GATEWAY_ORIGIN + '/dashboard', true, root); }
+        };
+      }
+      loadGatewayStatus();
+    }
+
     function renderGateway() {
       if (!modelsPane) return;
       var box = modelsPane.querySelector('#wbs-gw');
@@ -11117,34 +11209,44 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     function loadGatewayStatus() {
-      if (!modelsPane) return;
       api('/api/credit-proxy/status').then(function (data) {
         gatewayState.listening = !!data.listening;
         gatewayState.disabled = !!data.disabled;
         gatewayState.busy = false;
         renderGateway();
+        renderGatewayPaneChrome();
+        refreshGatewayFrame();
       }).catch(function () {
         gatewayState.busy = false;
-        var text = modelsPane.querySelector('#wbs-gw-text');
-        if (text) text.textContent = '网关状态未知';
+        renderGateway();
+        renderGatewayPaneChrome();
+        if (modelsPane) {
+          var text = modelsPane.querySelector('#wbs-gw-text');
+          if (text) text.textContent = '网关状态未知';
+        }
+        gatewayPaneMessage('网关状态未知，可点上方「刷新」重试');
       });
     }
 
     function toggleGateway() {
-      if (!modelsPane || gatewayState.busy) return;
+      if (gatewayState.busy) return;
       var stopping = gatewayState.listening;
       gatewayState.busy = true;
       renderGateway();
+      renderGatewayPaneChrome();
       api(stopping ? '/api/credit-proxy/stop' : '/api/credit-proxy/start', { method: 'POST' }).then(function (data) {
         gatewayState.listening = !!data.listening;
         gatewayState.disabled = !!data.disabled;
         gatewayState.busy = false;
         renderGateway();
+        renderGatewayPaneChrome();
+        refreshGatewayFrame();
         if (stopping && gatewayState.listening) toast('网关未能终止，请重启客户端后重试', true, root);
         else toast(stopping ? '网关已终止' : '网关已启动', false, root);
       }).catch(function (e) {
         gatewayState.busy = false;
         renderGateway();
+        renderGatewayPaneChrome();
         toast('操作失败：' + (e && e.message || e), true, root);
       });
     }
@@ -18965,6 +19067,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-tab:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-tab.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 2px 10px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent)}',
     '.wbs-pane{display:none;padding:2px 2px 6px}',
+      '.wbs-gw-pane{display:flex;flex-direction:column;gap:10px}',
+      '.wbs-gw-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.wbs-gw-bar-spacer{flex:1 1 auto}',
+      '.wbs-gw-frame-wrap{position:relative;height:380px;border-radius:10px;overflow:hidden;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));background:var(--wb-bg-tertiary,#f5f6f8)}',
+      '.wbs-gw-frame{display:block;width:100%;height:100%;border:0;background:var(--wb-bg-primary,#fff)}',
     '.wbs-pane.active{display:flex;flex-direction:column;height:100%;min-height:0}',
     '.wbs-settings-card{padding:12px 14px}',
     '.wbs-settings-row{display:flex;align-items:center;gap:12px;justify-content:space-between}',

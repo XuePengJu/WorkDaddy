@@ -392,6 +392,9 @@
   }
 
   function setOrder(mode) {
+    // embed 模式（应用内嵌 iframe）不注入 token，写接口必然 401：直接给出可执行的指引，
+    // 而不是让用户看到一次静默失败。
+    if (!TOKEN) { fail('内嵌视图只读：请点面板上方「浏览器打开」后再切换选号顺序'); return; }
     fail('正在切换到' + (mode === 'expiring' ? '临期积分优先…' : '当前账号优先…'));
     fetch(BASE + '/control/order', {
       method: 'POST',
@@ -628,7 +631,7 @@
           '<span class="msub">' + item.name + '</span>' +
           '<span class="mnum">' + (stat ? stat.requests + ' 次' : '—') + '</span>' +
           '<span class="mnum credit">' + (stat ? money(stat.credit) : '—') + '</span>' +
-          '<button class="' + btnCls + '" type="button">' + btnText + '</button>';
+          (TOKEN ? '<button class="' + btnCls + '" type="button">' + btnText + '</button>' : '<span></span>');
         if (fresh) {
           row.title = cached.title;
         } else if (stat) {

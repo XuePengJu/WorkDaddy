@@ -1016,7 +1016,7 @@ function createCreditProxy(deps) {
   const DASHBOARD_FILE = path.join(__dirname, 'credit-proxy-dashboard.html');
   let dashboardCache = null;
   let dashboardMtime = 0;
-  function serveDashboard(res) {
+  function serveDashboard(res, embed) {
     try {
       const stat = fs.statSync(DASHBOARD_FILE);
       if (dashboardCache === null || stat.mtimeMs !== dashboardMtime) {
@@ -1032,7 +1032,10 @@ function createCreditProxy(deps) {
     // 看板上的「测试」按钮需要带 Bearer 调 /control/test-model。
     // 只把 token 注入到看板页面本身：能打开这个页面的人已经在 127.0.0.1 上，
     // 拿到的就是访问本机代理的同一份凭证，不额外扩大暴露面。
-    const html = dashboardCache.split('__GW_TOKEN__').join(apiToken);
+    // embed=1 供应用内嵌 iframe 使用：它来自 file:// 页面（Sec-Fetch-Site 必然是 cross-site），
+    // 无法通过本机页面校验，因此该模式不注入 token——看板里的「测试」按钮自动隐藏，
+    // 其余只读接口按同源放行。这样既能让面板嵌入，又不把凭证交给任意网页。
+    const html = dashboardCache.split('__GW_TOKEN__').join(embed ? '' : apiToken);
     const body = Buffer.from(html, 'utf8');
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
@@ -1084,12 +1087,15 @@ function createCreditProxy(deps) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${HOST}:${port}`);
     const pathname = url.pathname;
+    // 应用内嵌 iframe 从 file:// 发起，Sec-Fetch-Site 必然是 cross-site，过不了本机页面校验。
+    // 只对看板 embed 模式放行，且该模式不注入 token（见 serveDashboard），不扩大凭证暴露面。
+    const dashboardEmbed = pathname === '/dashboard' && url.searchParams.get('embed') === '1';
 
     // CORS 预检：直接放行，不做鉴权（浏览器不会在预检里带 Authorization）。
     if (req.method === 'OPTIONS') {
       recordRequest(req, pathname, 'preflight');
       // 本机专用端点的预检也只认本机来源，跨站页面连预检都过不去。
-      if (isLocalOnlyPath(pathname) && !fromLocalPage(req)) {
+      if (isLocalOnlyPath(pathname) && !dashboardEmbed && !fromLocalPage(req)) {
         return sendJsonLocal(res, 403, { error: { message: '仅允许本机页面访问', type: 'permission_error' } });
       }
       res.writeHead(204, { ...CORS_HEADERS, 'Content-Length': '0' });
@@ -1097,7 +1103,7 @@ function createCreditProxy(deps) {
     }
 
     // 看板 / 用量 / 控制类端点只服务本机页面：这些端点会读到内嵌 token 或本机统计数据。
-    if (isLocalOnlyPath(pathname) && !fromLocalPage(req)) {
+    if (isLocalOnlyPath(pathname) && !dashboardEmbed && !fromLocalPage(req)) {
       recordRequest(req, pathname, 'cross-site-blocked');
       return sendJsonLocal(res, 403, { error: { message: '仅允许本机页面访问', type: 'permission_error' } });
     }
@@ -1137,7 +1143,7 @@ function createCreditProxy(deps) {
     }
     // 看板与用量查询只读本机统计数据，不代理任何上游请求，也不记录到 recent，
     // 否则看板自身的轮询会把请求记录刷掉。
-    if (pathname === '/dashboard') return serveDashboard(res);
+    if (pathname === '/dashboard') return serveDashboard(res, dashboardEmbed);
     if (pathname === '/usage/summary') {
       if (!usageStore) return sendJson(res, 503, { error: { message: '用量统计未启用' } });
       return sendJson(res, 200, usageStore.summary(url.searchParams.get('days')));
