@@ -187,18 +187,65 @@ function sendJsonLocal(res, status, payload) {
   res.end(text);
 }
 
-// 上游错误里可能带账号信息，只挑安全的字段回给客户端。
-function readUpstreamMessage(text) {
+/**
+ * 上游业务错误码。HTTP 状态码往往只是 400，真正的判定在响应体的 code 字段里。
+ *
+ * level 的含义决定了「换号有没有用」：
+ *  - channel：请求本身不像官方客户端（UA / 会话头 / 提示词指纹），换哪个账号都一样被拒；
+ *  - request：请求体不合法（工具 schema、消息顺序、thinking 签名），换号也没用；
+ *  - account：账号被上游限制。换号能继续跑，但这个账号必须立刻停用——继续用只会加速风控判定。
+ *
+ * 11140 是账号级红线的唯一明确信号：官方只让到官方客户端提交反馈，重登、换模型都无效。
+ */
+const UPSTREAM_CODES = {
+  10085: { level: 'channel', label: '客户端身份校验未通过（UA 不是官方形态）' },
+  11128: { level: 'channel', label: '渠道校验未通过（请求不像官方客户端）' },
+  11133: { level: 'request', label: '工具定义不合法' },
+  11140: { level: 'account', label: '账号被上游限制（异常活动），需到官方客户端提交反馈' },
+  11153: { level: 'request', label: '对话必须以 user 消息结尾' },
+  11159: { level: 'request', label: 'thinking 块不属于本次会话' },
+};
+
+/**
+ * 解析上游错误体。只挑安全的字段：文案截断 200 字符，不带账号/凭据信息。
+ * 返回 { code, message, label, level } —— code 解析失败时一律为 0，按 HTTP 状态码兜底分类。
+ */
+function readUpstreamError(text) {
+  const empty = { code: 0, message: '', label: '', level: '' };
+  if (!text) return empty;
+  let parsed = null;
   try {
-    const parsed = JSON.parse(text);
-    const message = parsed && (parsed.msg || parsed.message || (parsed.error && parsed.error.message));
-    return typeof message === 'string' ? message.slice(0, 200) : '';
+    parsed = JSON.parse(text);
   } catch (_) {
-    return '';
+    return empty;
   }
+  if (!parsed || typeof parsed !== 'object') return empty;
+  const rawCode = parsed.code ?? parsed.error_code ?? (parsed.error && parsed.error.code);
+  const code = Number(rawCode) || 0;
+  const rawMessage = parsed.msg || parsed.message || (parsed.error && parsed.error.message);
+  const known = UPSTREAM_CODES[code] || null;
+  return {
+    code,
+    message: typeof rawMessage === 'string' ? rawMessage.slice(0, 200) : '',
+    label: known ? known.label : '',
+    level: known ? known.level : '',
+  };
 }
 
-function isAccountLevelFailure(status) {
+// 兼容旧调用点：只取文案，不关心业务码。
+function readUpstreamMessage(text) {
+  return readUpstreamError(text).message;
+}
+
+/**
+ * 这个失败值不值得换个账号再试。
+ * 已知业务码优先于 HTTP 状态码：账号被限制（11140）虽然多半挂在 400 上，但确实是账号级；
+ * 渠道校验（11128 / 10085）虽然也可能配 400，但换号毫无意义，别拿去撞别的账号。
+ */
+function isAccountLevelFailure(status, code = 0) {
+  const known = UPSTREAM_CODES[code];
+  if (known && known.level === 'account') return true;
+  if (known && (known.level === 'channel' || known.level === 'request')) return false;
   // 401/403 凭据失效、402 额度耗尽、429 限流：都可以尝试换一个账号。
   return status === 401 || status === 402 || status === 403 || status === 429;
 }
@@ -433,10 +480,24 @@ function createCreditProxy(deps) {
     lastUid: null,
     lastError: null,
     byUid: Object.create(null),
+    // 被上游限制（11140）过的账号。只在本次进程内生效：重启后会再试一次，
+    // 但绝不值得为了「万一解封」在这条进程里反复撞同一个号。
+    restricted: [],
     // 最近到达的请求（只记录元信息，不含 prompt 与 token 明文），
     // 用于区分「客户端没连上」和「连上了但被 401/404 拦」。
     recent: [],
   };
+
+  // 账号被限制后立即移出轮换：继续拿它请求只会让风控画像更明显，
+  // 而用户看到的又是「代理坏了」。宁可这次请求明确失败，也不再踩这个号。
+  const restrictedUids = new Set();
+  function noteRestricted(uid, code, message) {
+    if (restrictedUids.has(uid)) return;
+    restrictedUids.add(uid);
+    const entry = { uid: shortUid(uid), code, message, at: new Date().toISOString() };
+    stats.restricted.push(entry);
+    log(`[credit-proxy] 账号 ${shortUid(uid)} 被上游限制（${code || '未知码'}），已移出轮换：${message || ''}`);
+  }
 
   function recordRequest(req, pathname, verdict) {
     const auth = String(req.headers.authorization || '');
@@ -467,8 +528,10 @@ function createCreditProxy(deps) {
     if (creditCache && typeof creditCache.refresh === 'function') creditCache.refresh();
     const accounts = typeof listAccounts === 'function' ? listAccounts() : [];
     const { pool, currentRows } = rankAccounts(accounts, currentUid && currentUid(), creditCache);
+    // 被上游限制过的账号不参与轮换（含当前账号兜底那一档）。
+    const usable = (row) => !restrictedUids.has(row.uid);
     // 备份账号按「最早过期优先」，最后用当前账号兜底保证可用性。
-    return [...pool, ...currentRows].slice(0, MAX_ACCOUNT_ATTEMPTS);
+    return [...pool.filter(usable), ...currentRows.filter(usable)].slice(0, MAX_ACCOUNT_ATTEMPTS);
   }
 
   async function resolveToken(uid) {
@@ -509,11 +572,15 @@ function createCreditProxy(deps) {
         return { ok: true, response, uid };
       }
       const text = await response.text().catch(() => '');
-      dumpDebug('upstream_error', { status: response.status, body: text.slice(0, 2000) });
+      const failure = readUpstreamError(text);
+      dumpDebug('upstream_error', { status: response.status, code: failure.code, body: text.slice(0, 2000) });
       return {
         ok: false,
         status: response.status || 502,
-        message: readUpstreamMessage(text) || `上游返回 ${response.status}`,
+        code: failure.code,
+        // 已知业务码优先用自己的中文说明：上游原文案容易误导（11128 常被当成鉴权问题）。
+        message: failure.label || failure.message || `上游返回 ${response.status}`,
+        accountLevel: isAccountLevelFailure(response.status, failure.code),
         uid,
       };
     } catch (error) {
@@ -541,7 +608,8 @@ function createCreditProxy(deps) {
   async function callWithRotation(payload, onAttempt) {
     const list = candidates();
     if (list.length === 0) {
-      return { ok: false, status: 503, message: '没有可用账号（账号列表为空）' };
+      const message = restrictedUids.size > 0 ? '候选账号均被上游限制' : '没有可用账号（账号列表为空）';
+      return { ok: false, status: 503, message };
     }
     let last = null;
     for (let index = 0; index < list.length; index += 1) {
@@ -551,9 +619,13 @@ function createCreditProxy(deps) {
       const result = await callUpstream(payload, account.uid);
       if (result.ok) return result;
       last = result;
-      // 只有账号级失败才值得换号；请求本身有问题（400）换谁都一样。
-      if (!isAccountLevelFailure(result.status)) break;
-      log(`[credit-proxy] 账号 ${shortUid(account.uid)} 失败（${result.status}），尝试下一个`);
+      // 账号被上游限制：先把号停掉，再试下一个；别让这个号继续被请求。
+      if (result.code && UPSTREAM_CODES[result.code] && UPSTREAM_CODES[result.code].level === 'account') {
+        noteRestricted(account.uid, result.code, result.message);
+      }
+      // 只有账号级失败才值得换号；渠道校验/请求本身有问题（400、11128）换谁都一样。
+      if (!result.accountLevel) break;
+      log(`[credit-proxy] 账号 ${shortUid(account.uid)} 失败（${result.status}${result.code ? ` / ${result.code}` : ''}），尝试下一个`);
     }
     return last || { ok: false, status: 502, message: '上游请求失败' };
   }
@@ -699,10 +771,11 @@ function createCreditProxy(deps) {
     if (!result.ok) {
       stats.failed += 1;
       stats.lastError = result.message;
-      log(`[credit-proxy] 请求失败（${result.status}）: ${result.message}`);
+      log(`[credit-proxy] 请求失败（${result.status}${result.code ? ` / ${result.code}` : ''}）: ${result.message}`);
       recordUsage({ model: payload.model, uid: result.uid, usage: null, ms: nowMs() - startedAt });
       return sendJson(res, result.status >= 400 && result.status < 600 ? result.status : 502, {
-        error: { message: result.message || '上游请求失败', type: 'upstream_error' },
+        // code 原样透出：客户端/看板要能区分「渠道校验」和「账号被限制」，这两件事的处理方式完全不同。
+        error: { message: result.message || '上游请求失败', type: 'upstream_error', code: result.code || 0 },
       });
     }
 
@@ -1001,4 +1074,16 @@ function createCreditProxy(deps) {
   };
 }
 
-module.exports = { createCreditProxy, rankAccounts, normalizeModel, withDefaultEffort, MODEL_PREFIXES, DEFAULT_PORT };
+module.exports = {
+  createCreditProxy,
+  rankAccounts,
+  normalizeModel,
+  withDefaultEffort,
+  MODEL_PREFIXES,
+  DEFAULT_PORT,
+  UPSTREAM_CODES,
+  readUpstreamError,
+  isAccountLevelFailure,
+  scrubMessages,
+  downgradeDeveloperRole,
+};
