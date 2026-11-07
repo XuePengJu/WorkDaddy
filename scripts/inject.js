@@ -11020,8 +11020,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-model-count" id="wbs-model-count"></span>' +
         '<span class="wbs-model-imports" id="wbs-model-imports"></span>' +
         '<span class="wbs-model-toolbar-spacer"></span>' +
-        // 这里只做状态提示，不放启停按钮：启停入口统一收敛到「网关」页，避免同一动作有两个入口。
-        '<span class="wbs-gw" id="wbs-gw"><span class="wbs-gw-dot"></span><span id="wbs-gw-text">网关检测中</span></span>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-model-batch" style="display:none">批量管理</button>' +
         '<div class="wbs-model-batchbar" id="wbs-model-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-model-check-all" type="button" id="wbs-model-check-all">全选</button>' +
@@ -11037,7 +11035,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<div class="wbs-modal-mask" id="wbs-model-edit" style="display:none"><div class="wbs-modal wbs-model-edit-modal"><div class="wbs-modal-title">编辑模型</div><div class="wbs-model-edit-form"><label class="wbs-model-edit-field"><span>自定义名称</span><input id="wbs-model-edit-name" type="text" autocomplete="off" placeholder="例如我的 DeepSeek"></label><label class="wbs-model-edit-field"><span>模型名</span><input id="wbs-model-edit-id" type="text" autocomplete="off" placeholder="例如 deepseek-v4-flash"></label><label class="wbs-model-edit-field"><span>URL</span><input id="wbs-model-edit-url" type="url" autocomplete="off"></label><label class="wbs-model-edit-field"><span>API Key</span><span class="wbs-model-secret-wrap"><input id="wbs-model-edit-key" type="password" autocomplete="off"><button class="wbs-model-eye" id="wbs-model-edit-eye" type="button" title="显示或隐藏 API Key" aria-label="显示或隐藏 API Key"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg></button></span></label></div><div class="wbs-modal-actions"><button class="wbs-modal-btn" type="button" id="wbs-model-edit-cancel">取消</button><button class="wbs-modal-btn wbs-modal-ok" type="button" id="wbs-model-edit-save">保存</button></div></div></div>';
       wireModelsPane();
       loadModels();
-      loadGatewayStatus();
     }
     // 前端脱敏：与后端 maskApiKey 一致。cell 列表展示短脱敏串，title 同样脱敏；编辑弹窗用明文原值
     function maskModelKey(apiKey) {
@@ -11103,12 +11100,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         updateModelCounts();
       });
     }
-    // 本地网关（47900）状态。自定义模型全部依赖它，所以要能一眼看到、一键启停。
+    // 本地网关（47900）状态。自定义模型全部依赖它，状态与启停都只在「网关」页呈现，
+    // 模型页保持原样、不掺网关相关信息。
     var gatewayState = { listening: false, disabled: false, busy: false };
 
     // ===== 网关 pane：一级入口，内嵌本地网关（47900）看板 =====
-    // 看板由网关自己 serve，所以这里只做容器与状态灯；启停走 daemon 的 /api/credit-proxy/*，
-    // 与「模型」页工具栏里的开关共用同一份 gatewayState，任一处操作两处同步。
+    // 看板由网关自己 serve，所以这里只做容器与状态灯；启停走 daemon 的 /api/credit-proxy/*。
     var GATEWAY_ORIGIN = 'http://127.0.0.1:47900';
 
     function gatewayFrameUrl() { return GATEWAY_ORIGIN + '/dashboard?embed=1&_=' + Date.now(); }
@@ -11189,35 +11186,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       loadGatewayStatus();
     }
 
-    function renderGateway() {
-      if (!modelsPane) return;
-      var box = modelsPane.querySelector('#wbs-gw');
-      var text = modelsPane.querySelector('#wbs-gw-text');
-      if (!box || !text) return;
-      box.classList.toggle('on', !gatewayState.busy && gatewayState.listening);
-      box.classList.toggle('off', !gatewayState.busy && !gatewayState.listening);
-      box.classList.toggle('busy', !!gatewayState.busy);
-      if (gatewayState.busy) text.textContent = '处理中…';
-      else if (gatewayState.listening) text.textContent = '网关运行中';
-      else text.textContent = gatewayState.disabled ? '网关已终止' : '网关未启动';
-    }
-
     function loadGatewayStatus() {
       api('/api/credit-proxy/status').then(function (data) {
         gatewayState.listening = !!data.listening;
         gatewayState.disabled = !!data.disabled;
         gatewayState.busy = false;
-        renderGateway();
         renderGatewayPaneChrome();
         refreshGatewayFrame();
       }).catch(function () {
         gatewayState.busy = false;
-        renderGateway();
         renderGatewayPaneChrome();
-        if (modelsPane) {
-          var text = modelsPane.querySelector('#wbs-gw-text');
-          if (text) text.textContent = '网关状态未知';
-        }
         gatewayPaneMessage('网关状态未知，可点上方「刷新」重试');
       });
     }
@@ -11226,20 +11204,17 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (gatewayState.busy) return;
       var stopping = gatewayState.listening;
       gatewayState.busy = true;
-      renderGateway();
       renderGatewayPaneChrome();
       api(stopping ? '/api/credit-proxy/stop' : '/api/credit-proxy/start', { method: 'POST' }).then(function (data) {
         gatewayState.listening = !!data.listening;
         gatewayState.disabled = !!data.disabled;
         gatewayState.busy = false;
-        renderGateway();
         renderGatewayPaneChrome();
         refreshGatewayFrame();
         if (stopping && gatewayState.listening) toast('网关未能终止，请重启客户端后重试', true, root);
         else toast(stopping ? '网关已终止' : '网关已启动', false, root);
       }).catch(function (e) {
         gatewayState.busy = false;
-        renderGateway();
         renderGatewayPaneChrome();
         toast('操作失败：' + (e && e.message || e), true, root);
       });
