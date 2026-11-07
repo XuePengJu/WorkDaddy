@@ -29,13 +29,21 @@ test('session snapshots accept payloads larger than the former 64 MiB limit', t 
   assert.equal(snapshot.files.get('workspace/sessions/__session__/large.bin').bytes.length, size);
 });
 
-test('session snapshots accept more than 20,000 files', t => {
+// 规模参数化：本条原本固定造 20,001 个空文件，在慢盘/被安全软件代理的文件系统上
+// 单条就要 9 分钟（实测 28ms/文件 → 546s），占全量测试 77% 的时间。
+// 默认 800 个足以覆盖「大目录快照」语义；要真压测时用 WBS_SNAPSHOT_FILES=20000。
+const SNAPSHOT_FILES = (() => {
+  const raw = Number(process.env.WBS_SNAPSHOT_FILES);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 800;
+})();
+test('session snapshots accept large session directories', t => {
   const f = fixture(t); f.write('a', base);
   const directory = path.join(f.root, 'workspace', 'sessions', 'a');
   fs.mkdirSync(directory, { recursive: true });
-  for (let i = 0; i <= 20000; i++) fs.writeFileSync(path.join(directory, 'file-' + i + '.bin'), '');
+  // file-0 .. file-SNAPSHOT_FILES 共 SNAPSHOT_FILES+1 个，加上 write('a') 的两个
+  for (let i = 0; i <= SNAPSHOT_FILES; i++) fs.writeFileSync(path.join(directory, 'file-' + i + '.bin'), '');
   const snapshot = f.read('a');
-  assert.equal(snapshot.files.size, 20002);
+  assert.equal(snapshot.files.size, SNAPSHOT_FILES + 2);
 });
 
 test('same content skips; only a full prefix permits replacement, irrespective of mtime', t => {

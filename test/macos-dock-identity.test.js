@@ -4,7 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-test('packaged macOS launcher starts the app through LaunchServices, not its Electron child', () => {
+// 本测试校验「已打包的」WorkDaddy.app 里那个冷启动 launcher 脚本。
+// 仓库里不含 WorkDaddy.app 打包产物（由 scripts/build-mac-dmg.sh 生成），
+// 未打包的检出上必然 ENOENT，属于环境性噪音而非代码缺陷 → 条件跳过。
+const PACKAGED_LAUNCHER = path.join(__dirname, '..', 'WorkDaddy.app', 'Contents', 'MacOS', 'launcher');
+test('packaged macOS launcher starts the app through LaunchServices, not its Electron child', {
+  skip: fs.existsSync(PACKAGED_LAUNCHER) ? false : 'packaged WorkDaddy.app not built (run scripts/build-mac-dmg.sh)',
+}, () => {
   const root = path.join(__dirname, '..');
   const build = fs.readFileSync(path.join(root, 'scripts/build-mac-dmg.sh'), 'utf8');
   const blocks = [...build.matchAll(/python3 - "\$PACKAGE_APP\/Contents\/MacOS\/launcher" <<'PY'\n([\s\S]*?)\nPY/g)];
