@@ -99,7 +99,7 @@ test('channel validation failure stops at the first account and evicts nothing',
 
 test('a throttled account still rotates to the next one and stays usable', async (t) => {
   const upstream = await startUpstream((req, res) => {
-    if (req.headers.authorization === 'Bearer token-uid-alpha') {
+    if (req.headers.authorization === 'Bearer token-uid-beta') {
       res.writeHead(429, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ msg: 'usage exceeds frequency limit' }));
       return;
@@ -111,7 +111,8 @@ test('a throttled account still rotates to the next one and stays usable', async
   const { proxy, port } = await startProxy(upstream.port, ['uid-alpha', 'uid-beta'], 'uid-beta');
   t.after(() => proxy.stop());
 
-  // 备份账号排在前面：限流的是 uid-alpha，换到当前账号 uid-beta 才成功。
+  // 默认「当前账号优先」：先打当前登录号 uid-beta，它被限流后才轮到备份号 uid-alpha。
+  // 这也是真实里最常发生的情形——登着的号累了，代理帮你换一个号继续跑完。
   const res = await chat(port);
   assert.equal(res.status, 200);
   assert.equal(upstream.calls.length, 2);

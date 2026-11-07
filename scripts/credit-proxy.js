@@ -131,6 +131,40 @@ function rankAccounts(accounts, currentUid, creditCache) {
 const DUMP_DIR = path.join(process.env.HOME || '', 'Library', 'Application Support', 'WorkDaddy');
 const DUMP_FLAG = path.join(DUMP_DIR, '.proxy-dump.on');
 const DUMP_FILE = path.join(DUMP_DIR, '.proxy-dump.jsonl');
+
+// 选号顺序（用户可切换，落盘在数据目录，重启后保留）：
+//  current  = 当前登录账号优先（默认）。请求用的 token 与客户端登录的账号一致，
+//             不会出现「登的是 A、扣的是 B」这种凭据错配。
+//  expiring = 临期积分优先（旧行为）。先把最早作废的备份账号积分烧掉，代价是错配。
+const ORDER_MODES = ['current', 'expiring'];
+const DEFAULT_ORDER_MODE = 'current';
+const ORDER_FILE = path.join(DUMP_DIR, 'credit-proxy-order.json');
+
+function readOrderMode(file = ORDER_FILE) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const mode = raw && raw.mode;
+    return ORDER_MODES.includes(mode) ? mode : DEFAULT_ORDER_MODE;
+  } catch (_) {
+    return DEFAULT_ORDER_MODE;
+  }
+}
+
+function writeOrderMode(mode, file = ORDER_FILE) {
+  try {
+    fs.writeFileSync(file, `${JSON.stringify({ mode, at: new Date().toISOString() }, null, 2)}\n`);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 把「当前账号」与「备份账号池」按模式拼成候选列表。纯函数，便于测试。 */
+function orderCandidates(pool, currentRows, mode) {
+  const backups = Array.isArray(pool) ? pool : [];
+  const current = Array.isArray(currentRows) ? currentRows : [];
+  return mode === 'expiring' ? [...backups, ...current] : [...current, ...backups];
+}
 function dumpDebug(label, value) {
   try {
     if (!fs.existsSync(DUMP_FLAG)) return;
@@ -460,6 +494,8 @@ function createCreditProxy(deps) {
     listModelConfigs = null,
     log = () => {},
     upstreamOrigin = DEFAULT_UPSTREAM,
+    // 选号顺序的落盘位置。测试传临时文件，避免写进真实数据目录。
+    orderFile = ORDER_FILE,
     port = Number(process.env.WBSWITCH_CREDIT_PROXY_PORT) || DEFAULT_PORT,
   } = deps;
 
@@ -483,6 +519,9 @@ function createCreditProxy(deps) {
     // 被上游限制（11140）过的账号。只在本次进程内生效：重启后会再试一次，
     // 但绝不值得为了「万一解封」在这条进程里反复撞同一个号。
     restricted: [],
+    // 最近一次请求实际用了哪个号、与客户端当前登录的号是否一致。
+    // 看板据此把「登的是谁、用的是谁」摆到明面上，不再让错配悄悄发生。
+    lastRequest: null,
     // 最近到达的请求（只记录元信息，不含 prompt 与 token 明文），
     // 用于区分「客户端没连上」和「连上了但被 401/404 拦」。
     recent: [],
@@ -497,6 +536,22 @@ function createCreditProxy(deps) {
     const entry = { uid: shortUid(uid), code, message, at: new Date().toISOString() };
     stats.restricted.push(entry);
     log(`[credit-proxy] 账号 ${shortUid(uid)} 被上游限制（${code || '未知码'}），已移出轮换：${message || ''}`);
+  }
+
+  /** 记录「这次请求用的是谁」，并标出它是不是当前登录的号。 */
+  function noteLastRequest(uid) {
+    if (!uid) return;
+    const cur = currentUid && currentUid();
+    const matched = !!cur && String(uid) === String(cur);
+    stats.lastRequest = {
+      uid: shortUid(uid),
+      current: cur ? shortUid(cur) : null,
+      matched,
+      at: new Date().toISOString(),
+    };
+    if (!matched && cur) {
+      log(`[credit-proxy] 本次请求用号 ${shortUid(uid)}，与当前登录 ${shortUid(cur)} 不一致`);
+    }
   }
 
   function recordRequest(req, pathname, verdict) {
@@ -522,6 +577,9 @@ function createCreditProxy(deps) {
     stats.byUid[uid] = (stats.byUid[uid] || 0) + 1;
   }
 
+  // 选号顺序：启动时读盘，运行中可被 /control/order 改。
+  let orderMode = readOrderMode(orderFile);
+
   function candidates() {
     // daemon 会在别的进程里刷新余额并重写缓存文件，选号前先对齐磁盘版本，
     // 否则会用启动那一刻的余额排序，直到代理重启。
@@ -530,8 +588,10 @@ function createCreditProxy(deps) {
     const { pool, currentRows } = rankAccounts(accounts, currentUid && currentUid(), creditCache);
     // 被上游限制过的账号不参与轮换（含当前账号兜底那一档）。
     const usable = (row) => !restrictedUids.has(row.uid);
-    // 备份账号按「最早过期优先」，最后用当前账号兜底保证可用性。
-    return [...pool.filter(usable), ...currentRows.filter(usable)].slice(0, MAX_ACCOUNT_ATTEMPTS);
+    // 默认当前账号优先：谁登录就用谁的 token，避免「登 A 用 B」的凭据错配。
+    // 切成 expiring 才回到旧的「最早过期优先」。
+    return orderCandidates(pool.filter(usable), currentRows.filter(usable), orderMode)
+      .slice(0, MAX_ACCOUNT_ATTEMPTS);
   }
 
   async function resolveToken(uid) {
@@ -767,6 +827,8 @@ function createCreditProxy(deps) {
     const result = await enqueue(() => callWithRotation(payload, (account, index) => {
       if (index > 0) log(`[credit-proxy] 换号重试 → ${shortUid(account.uid)}`);
     }));
+    // 成败都记：失败时也要能看出「这次本来想用谁的号」。
+    noteLastRequest(result.uid);
 
     if (!result.ok) {
       stats.failed += 1;
@@ -847,6 +909,8 @@ function createCreditProxy(deps) {
         { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 },
         null,
       );
+      // 看板上的「测试」按钮同样会占一个号，用的是不是登录那个号也要能看见。
+      noteLastRequest(result.uid);
       if (result.ok) {
         // 必须把流读完，否则上游连接会挂着不释放。
         await result.response.text().catch(() => '');
@@ -871,6 +935,27 @@ function createCreditProxy(deps) {
     });
   }
 
+  /**
+   * 切换选号顺序并落盘。current = 当前登录账号优先（默认），expiring = 临期积分优先。
+   * 落盘失败不影响本次进程内生效，只是重启后会回到默认，所以如实回 saved=false。
+   */
+  async function handleOrder(req, res) {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req, 16 * 1024)) || '{}');
+    } catch (_) {
+      body = {};
+    }
+    const mode = String((body && body.mode) || '').trim();
+    if (!ORDER_MODES.includes(mode)) {
+      return sendJson(res, 400, { ok: false, message: `mode 只能是 ${ORDER_MODES.join(' 或 ')}` });
+    }
+    orderMode = mode;
+    const saved = writeOrderMode(mode, orderFile);
+    log(`[credit-proxy] 选号顺序切换为 ${mode}${saved ? '' : '（落盘失败，重启后回退默认）'}`);
+    return sendJson(res, 200, { ok: true, mode, saved });
+  }
+
   function handleHealth(res) {
     const list = candidates();
     sendJson(res, 200, {
@@ -884,6 +969,10 @@ function createCreditProxy(deps) {
       lastError: stats.lastError,
       accounts: stats.byUid,
       queue: { serial: true },
+      // 选号顺序与「登的是谁 / 用的是谁」：看板直接渲染，不在前端猜。
+      order: orderMode,
+      orderModes: ORDER_MODES,
+      lastRequest: stats.lastRequest,
       recent: stats.recent.slice(-12),
       candidates: list.map((row) => ({
         uid: shortUid(row.uid),
@@ -1013,6 +1102,14 @@ function createCreditProxy(deps) {
       handleTestModel(req, res);
       return;
     }
+    // 选号顺序切换：决定「谁登录就用谁」还是「先烧临期积分」。看板上的开关调它。
+    if (pathname === '/control/order' && req.method === 'POST') {
+      if (!authorized(req)) {
+        return sendJson(res, 401, { error: { message: '本地代理未授权', type: 'authentication_error' } });
+      }
+      handleOrder(req, res);
+      return;
+    }
     // 看板与用量查询只读本机统计数据，不代理任何上游请求，也不记录到 recent，
     // 否则看板自身的轮询会把请求记录刷掉。
     if (pathname === '/dashboard') return serveDashboard(res);
@@ -1086,4 +1183,7 @@ module.exports = {
   isAccountLevelFailure,
   scrubMessages,
   downgradeDeveloperRole,
+  ORDER_MODES,
+  orderCandidates,
+  readOrderMode,
 };

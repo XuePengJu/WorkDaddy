@@ -56,6 +56,26 @@
   button.refresh:hover { color: var(--accent); border-color: var(--accent); }
   button.refresh:active { opacity: .7; }
 
+  /* 登的是谁、用的是谁：错配必须显眼，所以放在首屏卡片上方。 */
+  .acctbar {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 14px; margin-bottom: 12px;
+  }
+  .acctbar .seg { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .acctbar .label { color: var(--muted); font-size: 12px; }
+  .acctbar strong { font-size: 14px; font-weight: 650; }
+  .acctbar .state { font-size: 11px; color: var(--ok); }
+  .acctbar .state.warn { color: var(--warn); }
+  .acctbar .order { display: flex; align-items: center; gap: 6px; }
+  button.mode {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 7px; padding: 4px 10px; font-size: 11px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  button.mode:hover { color: var(--accent); border-color: var(--accent); }
+  button.mode[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
   .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
   @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .card {
@@ -174,6 +194,19 @@
     </div>
   </div>
 
+  <div class="acctbar">
+    <div class="seg">
+      <span class="label">本次请求账号</span>
+      <strong id="acct-used">—</strong>
+      <span class="state" id="acct-state"></span>
+    </div>
+    <div class="order">
+      <span class="label">选号顺序</span>
+      <button class="mode" id="order-current" type="button" aria-pressed="true">当前账号优先</button>
+      <button class="mode" id="order-expiring" type="button" aria-pressed="false">临期积分优先</button>
+    </div>
+  </div>
+
   <div class="cards">
     <div class="card">
       <div class="label">今日请求</div>
@@ -257,6 +290,12 @@
     if (!key) return '—';
     return accountNames[key] || '—';
   };
+  // 首屏「本次请求账号」不能显示成「—」：昵称映射还没到时先用短 uid 兜底。
+  var accountLabelOrId = function (shortId) {
+    var key = String(shortId || '');
+    if (!key) return '—';
+    return accountNames[key] || key;
+  };
   var num = function (n) {
     n = Number(n) || 0;
     return n.toLocaleString('zh-CN');
@@ -277,6 +316,55 @@
     return modelDisplay[raw.toLowerCase()] || raw;
   };
   var pick = function (id) { return document.getElementById(id); };
+
+  // 把「登的是谁、用的是谁」摆到明面上：凭据错配是账号风险里最该被看见的一条，
+  // 不能只藏在日志里。数据来自 /healthz 的 lastRequest 与 order。
+  function renderAccount(d) {
+    var lr = (d && d.lastRequest) || null;
+    var used = pick('acct-used');
+    var state = pick('acct-state');
+    if (!lr) {
+      used.textContent = '—';
+      state.textContent = '还没有经网关的请求';
+      state.className = 'state';
+    } else {
+      used.textContent = accountLabelOrId(lr.uid);
+      if (lr.matched) {
+        state.textContent = '与当前登录一致';
+        state.className = 'state';
+      } else if (lr.current) {
+        state.textContent = '与当前登录不一致（当前：' + accountLabelOrId(lr.current) + '）';
+        state.className = 'state warn';
+      } else {
+        state.textContent = '当前登录账号未知';
+        state.className = 'state warn';
+      }
+    }
+    var order = String((d && d.order) || 'current');
+    ['current', 'expiring'].forEach(function (mode) {
+      var btn = pick('order-' + mode);
+      if (btn) btn.setAttribute('aria-pressed', String(mode === order));
+    });
+  }
+
+  function setOrder(mode) {
+    fail('正在切换到' + (mode === 'expiring' ? '临期积分优先…' : '当前账号优先…'));
+    fetch(BASE + '/control/order', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({ mode: mode })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        fail('切换失败：' + ((res && res.message) || '未知错误'));
+        return;
+      }
+      // 落盘失败时本次仍生效，但重启会回退——这种「看起来成功其实没记住」必须说出来。
+      if (res.saved === false) { fail('已切换，但落盘失败，重启后会回退默认'); return; }
+      load();
+    }).catch(function (e) {
+      fail('切换失败：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
 
   function renderSummary(s) {
     var t = s.today || {};
@@ -624,6 +712,7 @@
       configuredModels.forEach(function (m) {
         if (m && m.id) modelDisplay[String(m.id).toLowerCase()] = m.id;
       });
+      renderAccount(res[3] || {});
       renderSummary(res[0] || {});
       renderRecent((res[1] && res[1].items) || []);
       markUpdated();
@@ -660,6 +749,8 @@
     event.preventDefault();
     toggleGroup(head);
   });
+  pick('order-current').addEventListener('click', function () { setOrder('current'); });
+  pick('order-expiring').addEventListener('click', function () { setOrder('expiring'); });
   load();
   setInterval(load, 10000);
 })();
