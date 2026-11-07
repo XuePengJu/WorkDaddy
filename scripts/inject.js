@@ -11020,7 +11020,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-model-count" id="wbs-model-count"></span>' +
         '<span class="wbs-model-imports" id="wbs-model-imports"></span>' +
         '<span class="wbs-model-toolbar-spacer"></span>' +
-        '<span class="wbs-gw" id="wbs-gw"><span class="wbs-gw-dot"></span><span id="wbs-gw-text">网关检测中</span><button class="wbs-sess-bbtn" type="button" id="wbs-gw-toggle" style="display:none">启动</button></span>' +
+        // 这里只做状态提示，不放启停按钮：启停入口统一收敛到「网关」页，避免同一动作有两个入口。
+        '<span class="wbs-gw" id="wbs-gw"><span class="wbs-gw-dot"></span><span id="wbs-gw-text">网关检测中</span></span>' +
         '<button class="wbs-sess-bbtn" type="button" id="wbs-model-batch" style="display:none">批量管理</button>' +
         '<div class="wbs-model-batchbar" id="wbs-model-batchbar" style="display:none">' +
         '<button class="wbs-sess-bbtn wbs-model-check-all" type="button" id="wbs-model-check-all">全选</button>' +
@@ -11192,20 +11193,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!modelsPane) return;
       var box = modelsPane.querySelector('#wbs-gw');
       var text = modelsPane.querySelector('#wbs-gw-text');
-      var btn = modelsPane.querySelector('#wbs-gw-toggle');
-      if (!box || !text || !btn) return;
+      if (!box || !text) return;
       box.classList.toggle('on', !gatewayState.busy && gatewayState.listening);
       box.classList.toggle('off', !gatewayState.busy && !gatewayState.listening);
       box.classList.toggle('busy', !!gatewayState.busy);
       if (gatewayState.busy) text.textContent = '处理中…';
       else if (gatewayState.listening) text.textContent = '网关运行中';
       else text.textContent = gatewayState.disabled ? '网关已终止' : '网关未启动';
-      btn.style.display = '';
-      btn.disabled = !!gatewayState.busy;
-      btn.textContent = gatewayState.listening ? '终止' : '启动';
-      btn.title = gatewayState.listening
-        ? '停止本地网关，自定义模型会立刻不可用'
-        : '启动本地网关（47900），恢复自定义模型';
     }
 
     function loadGatewayStatus() {
@@ -11488,8 +11482,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
       });
       modelsPane.addEventListener('click', function (event) {
-        var gwToggle = event.target.closest ? event.target.closest('#wbs-gw-toggle') : null;
-        if (gwToggle) { toggleGateway(); return; }
         var clientImport = event.target.closest ? event.target.closest('#wbs-model-client-import') : null;
         if (clientImport && !clientImport.disabled) {
           var clientMenu = modelsPane.querySelector('#wbs-model-client-menu');
