@@ -73,6 +73,8 @@ async function startProxy(upstreamPort, orderFile) {
     getToken: async (uid) => `token-${uid}`,
     upstreamOrigin: `http://127.0.0.1:${upstreamPort}`,
     orderFile,
+    // 选号测试与 UA 无关：注入固定值，免得每次都去探本机 CDP / 写真实缓存。
+    upstreamUa: { resolve: async () => 'Mozilla/5.0 (Test) AppleWebKit/537.36' },
     port: 0,
     log: () => {},
   });

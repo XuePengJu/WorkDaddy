@@ -76,6 +76,19 @@
   button.mode:hover { color: var(--accent); border-color: var(--accent); }
   button.mode[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
+  /* 上游 UA 单独占一行：它是给上游看的，不该跟「用的是哪个号」抢同一行注意力。 */
+  .acctbar .ua {
+    flex-basis: 100%; display: flex; align-items: center; gap: 8px; min-width: 0;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .acctbar .ua code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--text); opacity: .72;
+    flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .acctbar .ua .state { white-space: nowrap; font-size: 11px; color: var(--ok); }
+  .acctbar .ua .state.warn { color: var(--warn); }
+
   .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
   @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .card {
@@ -204,6 +217,11 @@
       <span class="label">选号顺序</span>
       <button class="mode" id="order-current" type="button" aria-pressed="true">当前账号优先</button>
       <button class="mode" id="order-expiring" type="button" aria-pressed="false">临期积分优先</button>
+    </div>
+    <div class="ua">
+      <span class="label">上游 UA</span>
+      <code id="ua-value">—</code>
+      <span class="state" id="ua-source"></span>
     </div>
   </div>
 
@@ -345,6 +363,32 @@
       var btn = pick('order-' + mode);
       if (btn) btn.setAttribute('aria-pressed', String(mode === order));
     });
+  }
+
+  // 上游 UA：只回答「现在发出去的是什么、它从哪来的」。
+  // 走到 cache / builtin 两级时标黄——那意味着这次没探测成功，值可能跟不上客户端版本。
+  var UA_SOURCES = {
+    cdp: { text: '客户端自报', warn: false },
+    package: { text: '安装包推导', warn: false },
+    cache: { text: '上次缓存', warn: true },
+    builtin: { text: '内置兜底', warn: true }
+  };
+  function renderUa(d) {
+    var info = (d && d.upstreamUa) || null;
+    var value = pick('ua-value');
+    var source = pick('ua-source');
+    if (!info || !info.ua) {
+      value.textContent = '—';
+      value.title = '';
+      source.textContent = '尚未解析';
+      source.className = 'state';
+      return;
+    }
+    value.textContent = info.ua;
+    value.title = info.ua;
+    var meta = UA_SOURCES[info.source] || { text: info.source || '未知来源', warn: true };
+    source.textContent = meta.text;
+    source.className = 'state' + (meta.warn ? ' warn' : '');
   }
 
   function setOrder(mode) {
@@ -713,6 +757,7 @@
         if (m && m.id) modelDisplay[String(m.id).toLowerCase()] = m.id;
       });
       renderAccount(res[3] || {});
+      renderUa(res[3] || {});
       renderSummary(res[0] || {});
       renderRecent((res[1] && res[1].items) || []);
       markUpdated();

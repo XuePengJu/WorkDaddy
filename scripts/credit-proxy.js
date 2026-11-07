@@ -11,6 +11,9 @@
  *  2. 全局串行：同一时刻只允许一个上游请求在跑。官方只设计过串行切号，
  *     并发多账号是最容易被识别的异常模式，这里主动放弃并发度换安全。
  *  3. 身份只由 Bearer token 决定，本模块不发送任何设备指纹/用户 ID 头。
+ *     唯一的例外是 User-Agent：不设的话 undici 会发 `node`，等于自报「我是脚本」。
+ *     这里改成这台机器上真实装着的官方客户端 UA（见 official-ua.js），
+ *     只去掉最廉价的机器指纹，不伪造设备侧任何凭据。
  *  4. 日志只记 uid 前 8 位，不落 token、不落 prompt 内容。
  */
 
@@ -18,6 +21,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
+const { createOfficialUa } = require(path.join(__dirname, 'official-ua.js'));
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 47900;
@@ -496,8 +500,22 @@ function createCreditProxy(deps) {
     upstreamOrigin = DEFAULT_UPSTREAM,
     // 选号顺序的落盘位置。测试传临时文件，避免写进真实数据目录。
     orderFile = ORDER_FILE,
+    // 上游 UA 解析器。缺省时按本机官方客户端自报值解析（见 official-ua.js），
+    // 测试注入固定实现，避免依赖本机装了什么。
+    upstreamUa = null,
     port = Number(process.env.WBSWITCH_CREDIT_PROXY_PORT) || DEFAULT_PORT,
   } = deps;
+
+  // 上游 UA：默认取本机官方客户端自报值，四级降级（cdp → 包推导 → 本地缓存 → 出厂常量）。
+  // 「取不到就不设 UA」是不允许的——那样会退回 undici 的 `node`，比什么都不做更显眼。
+  // 注入实现（测试用）只保证 resolve，其余两个方法在这里补齐，调用点不必到处判空。
+  const uaResolver = upstreamUa && typeof upstreamUa.resolve === 'function'
+    ? {
+      resolve: () => upstreamUa.resolve(),
+      current: typeof upstreamUa.current === 'function' ? () => upstreamUa.current() : () => null,
+      warmup: typeof upstreamUa.warmup === 'function' ? () => upstreamUa.warmup() : () => {},
+    }
+    : createOfficialUa({ log });
 
   // ---- 全局串行队列：同一时刻只跑一个上游请求 ----
   let chain = Promise.resolve();
@@ -618,12 +636,16 @@ function createCreditProxy(deps) {
         stream: true,
       });
       dumpDebug('outgoing', outgoing);
+      // 上游不校验 UA（实测），但 undici 默认会发 `node`。这里换成官方客户端 UA，
+      // 拿不到时由 official-ua 的缓存/常量兜底，所以正常情况下 ua 一定有值。
+      const upstreamUaValue = await uaResolver.resolve();
       const response = await fetch(`${upstreamOrigin}${UPSTREAM_PATH}`, {
         method: 'POST',
         headers: {
           accept: 'text/event-stream',
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
+          ...(upstreamUaValue ? { 'user-agent': upstreamUaValue } : {}),
         },
         body: JSON.stringify(outgoing),
         signal: controller.signal,
@@ -973,6 +995,9 @@ function createCreditProxy(deps) {
       order: orderMode,
       orderModes: ORDER_MODES,
       lastRequest: stats.lastRequest,
+      // 这一发实际带出去的 UA 与它的来源（cdp / package / cache / builtin）。
+      // 看板据此显示「UA 生效了吗」，避免以为改了却还在发 node。
+      upstreamUa: uaResolver.current(),
       recent: stats.recent.slice(-12),
       candidates: list.map((row) => ({
         uid: shortUid(row.uid),
@@ -1160,6 +1185,8 @@ function createCreditProxy(deps) {
         });
         server.listen(port, HOST, () => {
           log(`[credit-proxy] 已监听 http://${HOST}:${port}（串行模式，候选账号 ${candidates().length} 个）`);
+          // 先把 UA 探出来，别让首个请求替它等 CDP 超时。
+          uaResolver.warmup();
           resolve({ port, host: HOST });
         });
       });
