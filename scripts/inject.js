@@ -2126,6 +2126,35 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '客户端未在运行，无需重启': 'Client is not running; no relaunch needed',
     // —— 第十六批：自动化「新建任务」指定工作区（daemon 侧校验/报错文案） ——
     '工作区': 'Workspace', '(无)': '(none)',
+    // —— 第十七批：回复输出速度角标（tok/s）与本地网关状态按钮 ——
+    // 说明：本批包含大量整句 key。翻译器按 key 长度降序、最长优先匹配，
+    // 只有整句进字典才能压住 '生成'/'输出'/'网关' 这类短词键，避免中英混合。
+    '回复输出速度': 'Reply output speed',
+    '在每条回复底部显示 Tokens/秒': 'Show Tokens/second under every reply',
+    '在每条回复底部显示输出速度（tok/s）。只统计真正吐字的时间，工具执行停顿不计入': 'Show output speed (tok/s) under every reply. Only the time actually spent emitting tokens is counted; pauses for tool execution are excluded.',
+    '均速': 'avg ',
+    '纯生成': 'pure generation ',
+    '工具等待': 'tool wait ',
+    '总耗时': 'total ',
+    '事后按会话记录回算': 'computed afterwards from the session record',
+    '解码': 'decoding ',
+    '首字': 'first token ',
+    '生成': 'generation ',
+    '不到 1s': 'under 1s',
+    '生成过程未被观测，无速度数据': 'Generation was not observed; no speed data',
+    '停顿中，显示上一次速度': 'Paused; showing the last measured speed',
+    // 本地网关状态：此前长期漏翻，长句被短词撕成「网关Running」这类混合文案
+    '网关检测中': 'Gateway checking',
+    '网关运行中': 'Gateway running',
+    '网关已终止': 'Gateway stopped',
+    '网关未启动': 'Gateway not started',
+    '网关已启动': 'Gateway started',
+    '网关状态未知': 'Gateway status unknown',
+    '网关未能终止，请重启客户端后重试': 'The gateway could not be stopped. Restart the client and try again.',
+    '停止本地网关，自定义模型会立刻不可用': 'Stop the local gateway; custom models become unavailable immediately',
+    '启动本地网关（47900），恢复自定义模型': 'Start the local gateway (47900) to restore custom models',
+    '终止': 'Stop',
+    '启动': 'Start',
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
