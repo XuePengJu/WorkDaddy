@@ -1172,7 +1172,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var n;
     if ((n = document.querySelector('.wbs-root'))) n.remove();
     if ((n = document.getElementById('wbs-window-logo'))) n.remove();
-    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, #wbs-qp-insert-tooltip, .wbs-fork-button');
+    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, #wbs-qp-insert-tooltip, .wbs-fork-button, .wbs-throughput');
     for (var i = 0; i < st.length; i++) st[i].remove();
     var nav = document.querySelectorAll('.wbs-message-nav-root');
     for (var ni = 0; ni < nav.length; ni++) nav[ni].remove();
@@ -3394,6 +3394,442 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       conversationUsage.spacer = null;
       conversationUsage.controller = null;
     });
+    /* ———— 输出速度（throughput）：在每条回复底部显示 Tokens/秒 ————
+     * 数据来源是官方 messageStore 里的 assistant 消息：usage.outputTokens 为精确值
+     * （官方每步都写，流式过程中递增），内容块文本长度用来判断「是否正在吐字」。
+     * 官方自己算过 tokensPerSecond 但只写进 evlog 事件日志，没有接到界面上，这里补一个角标。
+     * 解码时长只累计「内容在增长」的间隔；工具执行、等上屏、思考停顿不计入，
+     * 否则一条跑十几步工具的消息会被摊平成个位数 tok/s，失去参考意义。
+     * 历史消息（本次运行没观测到生成过程）只显示 token 数，不臆造速度。 */
+    var THROUGHPUT_ENABLED_KEY = 'workdaddy.session.throughputEnabled';
+    var throughputEnabled = true;
+    try { throughputEnabled = localStorage.getItem(THROUGHPUT_ENABLED_KEY) !== '0'; } catch (_) {}
+    // 两次内容增长的间隔超过该值视为「不在吐字」，这段时间不计入解码时长
+    var THROUGHPUT_IDLE_GAP_MS = 1500;
+    // 少于该解码时长的样本没有统计意义（一问一答一两个 chunk），只显示 token 数
+    var THROUGHPUT_MIN_DECODE_MS = 400;
+    var THROUGHPUT_LIVE_SAMPLES = 8;
+    var THROUGHPUT_BOLT_SVG = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M7 0 2 7h3.1L4 12l6-7H6.9L7 0Z"/></svg>';
+    var throughput = {
+      enabled: throughputEnabled,
+      controller: null,
+      unsubscribe: null,
+      records: Object.create(null),
+      syncTimer: null,
+      // 历史回填：官方把 usage 从历史消息里剥掉了，token 数与生成耗时只能从会话 JSONL 拿。
+      // 一次只缓存当前会话，切走即清空，避免 requestId 张冠李戴。
+      history: { conversationId: '', requests: null, loadingId: '' },
+    };
+    function writeThroughputEnabled(enabled) {
+      throughputEnabled = !!enabled;
+      throughput.enabled = throughputEnabled;
+      try { localStorage.setItem(THROUGHPUT_ENABLED_KEY, throughputEnabled ? '1' : '0'); } catch (_) {}
+    }
+    function throughputIsAssistant(message) {
+      var role = String((message && (message.messageType || message.role)) || '').toLowerCase();
+      return role.indexOf('assistant') >= 0;
+    }
+    function throughputTokens(message) {
+      var usage = message && message.usage;
+      var value = usage && Number(usage.outputTokens);
+      return isFinite(value) && value > 0 ? value : 0;
+    }
+    // 正文与思考过程都算输出：outputTokens 本身含推理 token，只统计正文会让比值失真。
+    function throughputChars(message) {
+      var content = message && message.content;
+      if (!Array.isArray(content)) return 0;
+      var total = 0;
+      for (var i = 0; i < content.length; i++) {
+        var block = content[i];
+        if (block && typeof block.text === 'string') total += block.text.length;
+      }
+      return total;
+    }
+    function throughputFormatTokens(value) {
+      var number = Math.round(Number(value) || 0);
+      if (number >= 100000) return Math.round(number / 1000) + 'K';
+      if (number >= 10000) return (number / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+      return String(number).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+    function throughputFormatDuration(ms) {
+      var seconds = Math.max(0, Number(ms) || 0) / 1000;
+      if (seconds < 1) return '不到 1s';
+      if (seconds < 60) return (seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds))) + 's';
+      var minutes = Math.floor(seconds / 60);
+      var rest = Math.round(seconds % 60);
+      return minutes + 'm' + (rest ? rest + 's' : '');
+    }
+    // 流式早期官方还没下发 usage（outputTokens 为空），只有正文在涨。
+    // 用「已完成消息的 tokens/字符」真实比值校准字符→token 估算，样本足够前用混合默认值。
+    var THROUGHPUT_DEFAULT_TOKENS_PER_CHAR = 0.45;
+    var throughputCalibration = { tokens: 0, chars: 0 };
+    function throughputTokensPerChar() {
+      if (throughputCalibration.chars >= 300 && throughputCalibration.tokens > 0) {
+        var ratio = throughputCalibration.tokens / throughputCalibration.chars;
+        if (ratio > 0.05 && ratio < 2) return ratio;
+      }
+      return THROUGHPUT_DEFAULT_TOKENS_PER_CHAR;
+    }
+    /** 近期速度：只取最近若干次「内容增长」窗口，忽略停顿，避免数字来回跳。 */
+    function throughputLiveRate(rec) {
+      var sumTokens = 0;
+      var sumMs = 0;
+      for (var i = 0; i < rec.samples.length; i++) {
+        sumTokens += rec.samples[i].tok;
+        sumMs += rec.samples[i].ms;
+      }
+      if (sumMs < 120 || sumTokens <= 0) return null;
+      return sumTokens / sumMs * 1000;
+    }
+    function throughputFinalRate(rec) {
+      if (rec.activeMs < THROUGHPUT_MIN_DECODE_MS || rec.tokens <= 0) return null;
+      return rec.tokens / rec.activeMs * 1000;
+    }
+    /**
+     * 从会话 JSONL 换回来的历史用量里取这一条回复的数字。
+     * 只对「已经写完、但官方没给 usage」的消息生效——实时观测到的消息自带精确值，不需要回填。
+     */
+    function throughputHistoryRecord(message) {
+      if (!message || !throughput.enabled) return null;
+      var requests = throughput.history.requests;
+      if (!requests || !throughput.history.conversationId) return null;
+      if (String(message.conversationId || '') !== throughput.history.conversationId) return null;
+      var requestId = String(message.requestId || (message.extra && message.extra.conversationRequestId) || '');
+      if (!requestId) return null;
+      var item = requests[requestId];
+      if (!item || !(Number(item.output) > 0)) return null;
+      return {
+        tokens: Number(item.output) || 0,
+        modelMs: Number(item.modelMs) || 0,
+        spanMs: Number(item.spanMs) || 0,
+        toolMs: Number(item.toolMs) || 0,
+        firstAt: Number(item.firstAt) || 0,
+        endAt: Number(item.end) || 0,
+        steps: Number(item.steps) || 0,
+      };
+    }
+    function loadThroughputHistory(conversationId) {
+      var id = String(conversationId || '');
+      if (!id || throughput.history.loadingId === id) return;
+      throughput.history.loadingId = id;
+      api('/api/conversation-tokens?conversationId=' + encodeURIComponent(id))
+        .then(function (payload) {
+          if (throughput.history.loadingId !== id) return;
+          throughput.history.loadingId = '';
+          if (!payload || !payload.requests) return;
+          throughput.history.conversationId = id;
+          throughput.history.requests = payload.requests;
+          // 回填后立刻刷一次，不用等下一拍兜底 tick
+          if (alive) scheduleThroughputBadges();
+        })
+        .catch(function () {
+          if (throughput.history.loadingId === id) throughput.history.loadingId = '';
+        });
+    }
+    function syncThroughputHistory(surface) {
+      var id = String((surface && surface.id) || '');
+      if (!id) return;
+      if (throughput.history.conversationId === id || throughput.history.loadingId === id) return;
+      // 换会话先清空，避免上一个会话的 requestId 命中新消息
+      throughput.history.conversationId = '';
+      throughput.history.requests = null;
+      loadThroughputHistory(id);
+    }
+    /** 观察一次 store 快照：累计解码时长、首次吐字时间、完成状态。 */
+    function throughputObserve(state) {
+      if (!throughput.enabled || !state || !Array.isArray(state.messages)) return;
+      var now = Date.now();
+      var messages = state.messages;
+      // 正在生成的那条由实时观测独占，不能拿历史数字去盖（否则会把中途值冻住）
+      var streamingId = String(state.streamingMessageId || '');
+      for (var i = 0; i < messages.length; i++) {
+        var message = messages[i];
+        if (!throughputIsAssistant(message)) continue;
+        var id = String(message.id || '');
+        if (!id) continue;
+        var rec = throughput.records[id];
+        // 完成后仍要看一眼：官方可能先置 complete 再补 usage（实测有整轮 usage 迟到）
+        var tokens = throughputTokens(message);
+        var chars = throughputChars(message);
+        if (!rec) {
+          if (!tokens && !chars) continue;
+          // 历史消息：官方已明确 complete 且没有 usage，用会话 JSONL 的真实数字回填，
+          // 否则这条回复将永远没有角标（重启后所有回复都是这个状态）。
+          var historyItem = !tokens && String(message.id) !== streamingId ? throughputHistoryRecord(message) : null;
+          rec = throughput.records[id] = historyItem ? {
+            id: id,
+            tokens: historyItem.tokens,
+            chars: chars,
+            activeMs: historyItem.modelMs,
+            firstChangeAt: historyItem.firstAt,
+            lastChangeAt: 0,
+            createTime: Number(message.createTime) || 0,
+            done: true,
+            doneAt: historyItem.endAt,
+            samples: [],
+            fromHistory: true,
+            missedStart: true,
+            lastRate: 0,
+            toolMs: historyItem.toolMs,
+            spanMs: historyItem.spanMs,
+          } : {
+            id: id,
+            tokens: 0,
+            chars: 0,
+            activeMs: 0,
+            firstChangeAt: 0,
+            lastChangeAt: 0,
+            createTime: Number(message.createTime) || 0,
+            done: false,
+            doneAt: 0,
+            samples: [],
+            fromHistory: false,
+            // 首次看到它时正文已经有内容，说明这条的生成过程我们从中间才开始看，
+            // 首字时间无法还原（实测会出现「首字 24m42s」这种胡说）
+            missedStart: chars > 0,
+            lastRate: 0,
+          };
+        }
+        // 回填是异步到的：先前已按「无 usage」建过记录，这里补升一次，
+        // 否则第一次渲染时 JSONL 还没回来，角标会一直是空的。
+        if (rec && !rec.fromHistory && !rec.tokens && rec.chars > 0 && String(message.id) !== streamingId) {
+          var lateHistory = throughputHistoryRecord(message);
+          if (lateHistory) {
+            rec.fromHistory = true;
+            rec.tokens = lateHistory.tokens;
+            rec.chars = chars;
+            rec.activeMs = lateHistory.modelMs;
+            rec.firstChangeAt = lateHistory.firstAt || rec.firstChangeAt;
+            rec.done = true;
+            rec.doneAt = lateHistory.endAt || rec.doneAt;
+            rec.toolMs = lateHistory.toolMs;
+            rec.spanMs = lateHistory.spanMs;
+            rec.samples.length = 0;
+          }
+        }
+        // 回填出来的记录不再参与实时累计：它的时长口径是「事后按步回算」，与实时观测不同源
+        if (!rec.fromHistory && (tokens > rec.tokens || chars > rec.chars)) {
+          var deltaTokens = Math.max(0, tokens - rec.tokens);
+          var deltaChars = Math.max(0, chars - rec.chars);
+          // 有精确 token 增量就用精确值；只有正文在涨时按校准比值折算
+          var delta = deltaTokens > 0 ? deltaTokens : deltaChars * throughputTokensPerChar();
+          if (!rec.firstChangeAt) {
+            rec.firstChangeAt = now;
+            if (!rec.createTime) rec.createTime = Number(message.createTime) || 0;
+          } else if (!rec.done) {
+            var gap = now - rec.lastChangeAt;
+            // 停顿不计入解码时长；对应样本也不参与近期速度
+            if (gap > 0 && gap <= THROUGHPUT_IDLE_GAP_MS) {
+              rec.activeMs += gap;
+              if (delta > 0) {
+                rec.samples.push({ tok: delta, ms: gap });
+                if (rec.samples.length > THROUGHPUT_LIVE_SAMPLES) rec.samples.shift();
+              }
+            } else if (gap > THROUGHPUT_IDLE_GAP_MS) {
+              rec.samples.length = 0;
+            }
+          }
+          rec.lastChangeAt = now;
+          rec.tokens = Math.max(rec.tokens, tokens);
+          rec.chars = Math.max(rec.chars, chars);
+        }
+        if (message.complete === true || message.isEnd === true) {
+          // 完成时间只记第一次：每拍都刷会把 doneAt 往前推，等于把「生成耗时」算成实时钟
+          if (!rec.done) rec.doneAt = now;
+          rec.done = true;
+          rec.samples.length = 0;
+          if (rec.tokens > 0 && rec.chars > 0) {
+            throughputCalibration.tokens += rec.tokens;
+            throughputCalibration.chars += rec.chars;
+          }
+        }
+      }
+    }
+    function throughputBadgeText(rec) {
+      if (!rec) return '';
+      if (!rec.done) {
+        var live = throughputLiveRate(rec);
+        if (live !== null) {
+          // 记住最后一次算得出的速度：工具执行/长时间停顿会把窗口样本清空，
+          // 那段时间直接消失会让角标看起来像坏了，改为冻结在一个暗色数字上。
+          rec.lastRate = live;
+          return Math.round(live) + ' tok/s';
+        }
+        if (rec.lastRate > 0) return Math.round(rec.lastRate) + ' tok/s';
+        return rec.tokens > 0 ? throughputFormatTokens(rec.tokens) + ' tok' : '';
+      }
+      var rate = throughputFinalRate(rec);
+      if (rate !== null) {
+        // 回填的是「整轮平均」（含每步启动开销），与实时吐字瞬时速度不是一回事，
+        // 角标上直接标出「均速」，避免两个数字摆在一起互相打架（实测差 2 倍）
+        return rec.fromHistory ? '均速 ' + Math.round(rate) + ' tok/s' : Math.round(rate) + ' tok/s';
+      }
+      return rec.tokens > 0 ? throughputFormatTokens(rec.tokens) + ' tok' : '';
+    }
+    function throughputBadgeTitle(rec) {
+      if (!rec) return '';
+      // 回填口径与实时观测不同源：用语必须区分，否则「解码 145s」和「总耗时 191s」会互相打架
+      if (rec.fromHistory) {
+        var hist = ['输出 ' + throughputFormatTokens(rec.tokens) + ' tok'];
+        var histRate = throughputFinalRate(rec);
+        if (histRate !== null) hist.push('均速 ' + Math.round(histRate) + ' tok/s');
+        if (rec.activeMs > 0) hist.push('纯生成 ' + throughputFormatDuration(rec.activeMs));
+        if (rec.toolMs > 0) hist.push('工具等待 ' + throughputFormatDuration(rec.toolMs));
+        if (rec.spanMs > 0) hist.push('总耗时 ' + throughputFormatDuration(rec.spanMs));
+        hist.push('事后按会话记录回算');
+        return hist.join(' · ');
+      }
+      var parts = [];
+      if (rec.tokens > 0) parts.push('输出 ' + throughputFormatTokens(rec.tokens) + ' tok');
+      var rate = rec.done ? throughputFinalRate(rec) : throughputLiveRate(rec);
+      if (rate !== null) parts.push('解码 ' + throughputFormatDuration(rec.activeMs));
+      else if (rec.done && rec.tokens > 0) parts.push('生成过程未被观测，无速度数据');
+      else if (!rec.done && rec.lastRate > 0) parts.push('停顿中，显示上一次速度');
+      // missedStart：我们从中间才开始看，首字时间无法还原，宁可不说
+      if (!rec.missedStart && rec.firstChangeAt && rec.createTime && rec.firstChangeAt > rec.createTime) {
+        parts.push('首字 ' + throughputFormatDuration(rec.firstChangeAt - rec.createTime));
+      }
+      if (rec.done && rec.doneAt && rec.firstChangeAt && rec.doneAt > rec.firstChangeAt) {
+        parts.push('生成 ' + throughputFormatDuration(rec.doneAt - rec.firstChangeAt));
+      }
+      return parts.join(' · ');
+    }
+    function throughputAnchor(node) {
+      var footer = node.querySelector('.conversation-finished-footer, .conversation-streaming-footer');
+      if (footer) {
+        // 完成态 footer 里有一行官方按钮（复制/点赞…），角标挂这行末尾；WorkDaddy 的分支按钮也在这一行
+        var feedback = footer.querySelector('[class*="assistantFeedback"]');
+        if (feedback) return feedback;
+        return footer;
+      }
+      return node.querySelector('.cr-agent__body') || node;
+    }
+    function renderThroughputBadge(node, rec) {
+      var existing = node.querySelector('.wbs-throughput');
+      // 消息块之间不会嵌套，但保险起见确认角标属于当前这条
+      if (existing && existing.closest('.cr-agent') !== node) existing = null;
+      var text = throughputBadgeText(rec);
+      if (!text) {
+        if (existing) existing.remove();
+        return;
+      }
+      var title = throughputBadgeTitle(rec);
+      var host = throughputAnchor(node);
+      var badge = existing;
+      if (!badge) {
+        badge = el('div', 'wbs-throughput');
+        badge.setAttribute('data-wbs-throughput', '1');
+        badge.innerHTML = THROUGHPUT_BOLT_SVG + '<span class="wbs-throughput-text"></span>';
+      }
+      if (badge.parentNode !== host) host.appendChild(badge);
+      // 实时只在「此刻确实在吐字」时点亮；停顿、回填、无速度数据一律暗显
+      var badgeLive = !rec.done && throughputLiveRate(rec) !== null;
+      badge.classList.toggle('is-live', badgeLive);
+      badge.classList.toggle('is-static', rec.done ? throughputFinalRate(rec) === null : !badgeLive);
+      var textNode = badge.querySelector('.wbs-throughput-text');
+      if (textNode && textNode.textContent !== text) textNode.textContent = text;
+      if (badge.getAttribute('title') !== title) badge.setAttribute('title', title);
+    }
+    function removeThroughputBadges() {
+      var nodes = document.querySelectorAll('.wbs-throughput');
+      for (var i = 0; i < nodes.length; i++) nodes[i].remove();
+    }
+    function syncThroughputBadges() {
+      if (!throughput.enabled) { removeThroughputBadges(); return; }
+      var nodes = document.querySelectorAll('.cr-agent[data-message-id]');
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        var id = String(node.getAttribute('data-message-id') || '');
+        if (!id) continue;
+        var rec = throughput.records[id];
+        if (!rec) {
+          var stale = node.querySelector('.wbs-throughput');
+          if (stale) stale.remove();
+          continue;
+        }
+        renderThroughputBadge(node, rec);
+      }
+    }
+    function scheduleThroughputBadges() {
+      if (!throughput.enabled || throughput.syncTimer) return;
+      throughput.syncTimer = setBuildTimeout(function () {
+        throughput.syncTimer = null;
+        if (!alive) return;
+        // 历史用量也在这条路线上拉：只靠 1s 兜底 tick 的话，窗口失焦被节流时
+        // 历史角标会长时间不出现，而 DOM 变更/流式更新是更可靠的触发点。
+        var surface = usageSurface();
+        if (surface) syncThroughputHistory(surface);
+        syncThroughputBadges();
+      }, 150);
+    }
+    function bindThroughputController(controller) {
+      if (throughput.controller === controller) {
+        if (controller && controller.messageStore) {
+          try { throughputObserve(controller.messageStore.getState()); } catch (_) {}
+        }
+        return;
+      }
+      if (throughput.unsubscribe) {
+        try { throughput.unsubscribe(); } catch (_) {}
+        throughput.unsubscribe = null;
+      }
+      throughput.controller = controller || null;
+      if (!controller || !controller.messageStore) return;
+      var store = controller.messageStore;
+      var scheduled = false;
+      function refresh(state) {
+        if (throughput.controller !== controller) return;
+        if (scheduled) return;
+        scheduled = true;
+        var raf = window.requestAnimationFrame || function (cb) { return window.setTimeout(cb, 16); };
+        raf(function () {
+          scheduled = false;
+          if (throughput.controller !== controller) return;
+          var s = state;
+          if (!s || !Array.isArray(s.messages)) {
+            try { s = store.getState(); } catch (_) { s = null; }
+          }
+          throughputObserve(s);
+          scheduleThroughputBadges();
+        });
+      }
+      try { throughput.unsubscribe = store.subscribe(refresh); } catch (_) { throughput.unsubscribe = null; }
+      try { refresh(store.getState()); } catch (_) {}
+    }
+    function syncThroughput() {
+      if (!alive) return;
+      if (!throughput.enabled) {
+        removeThroughputBadges();
+        bindThroughputController(null);
+        return;
+      }
+      var surface = usageSurface();
+      if (!surface) {
+        removeThroughputBadges();
+        bindThroughputController(null);
+        return;
+      }
+      syncThroughputHistory(surface);
+      bindThroughputController(usageController(surface.id));
+      syncThroughputBadges();
+    }
+    function setThroughputEnabled(enabled) {
+      writeThroughputEnabled(enabled);
+      syncThroughput();
+      if (!throughputEnabled) removeThroughputBadges();
+    }
+    registerDisposer(function () {
+      if (throughput.unsubscribe) { try { throughput.unsubscribe(); } catch (_) {} }
+      throughput.unsubscribe = null;
+      throughput.controller = null;
+      removeThroughputBadges();
+    });
+    setBuildInterval(function () {
+      // 兜底重扫：注入时聊天区可能还没就绪、切换会话后 controller 会换人、
+      // 官方收尾时 store 也不再发更新，都靠这一拍重新绑定并刷新角标。
+      if (!throughput.enabled) return;
+      syncThroughput();
+    }, 1000);
     var toastRuntime = window.__wbsToastRuntime;
     if (!toastRuntime) throw new Error('通知组件未加载');
     registerDisposer(function () { toastRuntime.destroy(); });
@@ -4046,6 +4482,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       stash: true,
       messageNav: readMessageNavigationEnabled(),
       usageSummary: conversationUsageEnabled,
+      throughput: throughputEnabled,
       fork: readForkEnabled(),
       phrase: true,
       themeTakeover: CAPS.themeTakeover !== false,
@@ -5514,6 +5951,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       guardSessionChange();
       if (messageNavigation) messageNavigation.sync();
       scheduleForkButtons();
+      scheduleThroughputBadges();
       scheduleFabPos();
       if (typeof syncGlassComposerTriggerBackgrounds === 'function') syncGlassComposerTriggerBackgrounds();
       watchRow();
@@ -5596,6 +6034,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     syncGlassComposerTriggerBackgrounds();
     syncStash(); // 初始检查
     scheduleForkButtons();
+    setBuildTimeout(syncThroughput, 400);
     setBuildTimeout(wrapQueueReorder, 800);
 
     // ===== 悬浮按钮位置：拖动时可在窗口内移动，释放后水平吸附右边 =====
@@ -11270,6 +11709,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<label class="wbs-switch" title="在会话底部显示 Token、积分和模型汇总"><input type="checkbox" id="wbs-sess-usage-summary"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
+        '<span class="wbs-nd-title">回复输出速度</span>' +
+        '<span class="wbs-nd-hint">在每条回复底部显示 Tokens/秒</span>' +
+        '<label class="wbs-switch" title="在每条回复底部显示输出速度（tok/s）。只统计真正吐字的时间，工具执行停顿不计入"><input type="checkbox" id="wbs-sess-throughput"><span class="wbs-switch-slider"></span></label>' +
+        '</div>' +
+        '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">分支到新会话</span>' +
         '<span class="wbs-nd-hint">复制到这条回复为止的聊天内容，在当前工作区继续聊；原会话不变</span>' +
         '<label class="wbs-switch"><input type="checkbox" id="wbs-sess-fork" aria-label="分支到新会话"><span class="wbs-switch-slider"></span></label>' +
@@ -15517,6 +15961,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           setConversationUsageEnabled(sessState.usageSummary);
         });
       }
+      var swT = pane2.querySelector('#wbs-sess-throughput');
+      if (swT) {
+        swT.checked = throughputEnabled;
+        swT.addEventListener('change', function () {
+          sessState.throughput = !!this.checked;
+          setThroughputEnabled(sessState.throughput);
+        });
+      }
       var swF = pane2.querySelector('#wbs-sess-fork');
       if (swF) {
         swF.checked = sessState.fork;
@@ -18079,6 +18531,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-fork-button:disabled{opacity:.45;cursor:default}',
     'html.cb-dark .wbs-fork-button,html[data-theme="dark"] .wbs-fork-button,body[data-vscode-theme-name*="dark" i] .wbs-fork-button{color:var(--wb-icon-secondary,rgba(255,255,255,.7))}',
     'html.cb-dark .wbs-fork-button:hover,html[data-theme="dark"] .wbs-fork-button:hover,body[data-vscode-theme-name*="dark" i] .wbs-fork-button:hover{color:var(--wb-color-text-primary,#f2f3f5);background:var(--wb-bg-hover,rgba(255,255,255,.1))}',
+    /* 回复输出速度角标：与官方 footer 按钮同一行高，数字等宽避免实时刷新时宽度抖动 */
+    '.wbs-throughput{display:inline-flex;flex:0 0 auto;align-items:center;gap:4px;height:24px;padding:0 7px;margin:0 0 0 2px;border:0;border-radius:8px;background:transparent;color:var(--wb-color-text-secondary,rgba(0,0,0,.6));font-size:11px;line-height:1;font-family:inherit;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .15s ease,color .15s ease}',
+    '.wbs-throughput svg{flex:0 0 auto;width:11px;height:11px;opacity:.75}',
+    '.wbs-throughput:hover{background:var(--wb-bg-hover,rgba(0,0,0,.06))}',
+    '.wbs-throughput.is-live{color:var(--wb-accent-blue,#4f86ff)}',
+    '.wbs-throughput.is-live svg{opacity:1}',
+    '.wbs-throughput.is-static{opacity:.6}',
+    'html.cb-dark .wbs-throughput,html[data-theme="dark"] .wbs-throughput,body[data-vscode-theme-name*="dark" i] .wbs-throughput{color:var(--wb-color-text-secondary,rgba(255,255,255,.62))}',
+    'html.cb-dark .wbs-throughput:hover,html[data-theme="dark"] .wbs-throughput:hover,body[data-vscode-theme-name*="dark" i] .wbs-throughput:hover{background:var(--wb-bg-hover,rgba(255,255,255,.1))}',
+    'html.cb-dark .wbs-throughput.is-live,html[data-theme="dark"] .wbs-throughput.is-live,body[data-vscode-theme-name*="dark" i] .wbs-throughput.is-live{color:var(--wb-accent-blue,#7aa2ff)}',
     /* 会话消息索引：跟随官方消息视口定位，tooltip 使用主题感知的毛玻璃表面 */
     'html[data-wbs-message-nav] aside.conversation-history-navigation{display:none!important}',
     '.wbs-message-nav-root{position:fixed;width:24px;z-index:1000;pointer-events:none;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--wb-color-text-primary,#1f1f1f)}',

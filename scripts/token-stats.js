@@ -495,4 +495,94 @@ function scanTokenStats(root, options = {}) {
   return { ...stats, files: parsed.files, parsedLines: parsed.parsedLines, parseErrors: parsed.parseErrors };
 }
 
-module.exports = { tokenStatsCacheReady, scanTokenStats, scanTokenStatsCached, findUsage, walkJsonl, dateBounds };
+/** 在 projects/<项目>/ 下定位某个会话的 JSONL（同名文件只保留最新的一份）。 */
+function findConversationFile(dataRoot, conversationId) {
+  const id = String(conversationId || '').trim();
+  // 会话 ID 一律是 uuid/短 hash；限制字符集，顺带挡住路径穿越
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return null;
+  const projects = path.join(dataRoot, 'projects');
+  let dirs;
+  try { dirs = fs.readdirSync(projects); } catch (_) { return null; }
+  let newest = null;
+  for (const dir of dirs) {
+    const file = path.join(projects, dir, id + '.jsonl');
+    let stat;
+    try { stat = fs.statSync(file); } catch (_) { continue; }
+    if (!stat.isFile()) continue;
+    if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { file, mtimeMs: stat.mtimeMs };
+  }
+  return newest ? newest.file : null;
+}
+
+/**
+ * 读取单个会话 JSONL，按 providerData.conversationRequestId 聚合「一次请求」的用量与耗时。
+ * 只读、不参与 token 统计缓存，因此不影响 CACHE_VERSION。
+ * 耗时口径：span 为整轮墙钟时间，toolMs 是 function_call → function_call_result 的等待，
+ * modelMs = span - toolMs，即真正花在模型生成上的时间（含思考）。速度用 output / modelMs，
+ * 与渲染层实时观测的「只累计吐字间隔」是两套口径，调用方需自行区分措辞。
+ * 每行 usage 是该步的增量（不是累计值），所以求和；同一行只取一处 usage，避免重复计。
+ */
+function scanConversationRequests(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return { requests: {}, rows: 0 }; }
+  const rows = [];
+  let invalid = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line.charCodeAt(0) !== 123) continue; // 只认对象行
+    let record;
+    try { record = JSON.parse(line); } catch (_) { invalid++; continue; }
+    if (!record || typeof record !== 'object' || record.isSnapshotUpdate) continue;
+    const providerData = record.providerData || {};
+    const requestId = String(providerData.conversationRequestId || providerData.requestId || record.requestId || '').trim();
+    if (!requestId) continue;
+    const timestamp = timestampValue(record.timestamp || record.createdAt || record.startedAt, NaN);
+    if (!Number.isFinite(timestamp)) continue;
+    rows.push({ record, providerData, requestId, timestamp });
+  }
+  rows.sort((a, b) => a.timestamp - b.timestamp);
+  const requests = Object.create(null);
+  const callAt = new Map();
+  for (const row of rows) {
+    let item = requests[row.requestId];
+    if (!item) {
+      item = requests[row.requestId] = {
+        requestId: row.requestId, input: 0, output: 0, steps: 0, toolCalls: 0,
+        start: row.timestamp, end: row.timestamp, spanMs: 0, toolMs: 0, modelMs: 0, firstAt: 0,
+      };
+    }
+    if (row.timestamp < item.start) item.start = row.timestamp;
+    if (row.timestamp > item.end) item.end = row.timestamp;
+    if (row.providerData.stepSeq && row.providerData.stepSeq > item.steps) item.steps = Number(row.providerData.stepSeq) || 0;
+    const type = row.record.type;
+    if (type === 'function_call') {
+      item.toolCalls++;
+      if (row.record.id) callAt.set(row.record.id, row.timestamp);
+    } else if (type === 'function_call_result') {
+      const startedAt = callAt.get(row.record.parentId);
+      if (Number.isFinite(startedAt)) {
+        item.toolMs += Math.max(0, row.timestamp - startedAt);
+        callAt.delete(row.record.parentId);
+      }
+    }
+    const usage = findUsage(row.providerData.usage) || findUsage(row.record.message && row.record.message.usage);
+    if (usage) {
+      const output = numberField(usage, TOKEN_FIELDS.output);
+      const input = numberField(usage, TOKEN_FIELDS.input);
+      // 单步 usage 缺失时用后续步骤补齐，避免整轮被算成 0
+      if (output > 0) item.output += output;
+      if (input > 0) item.input += input;
+      if (!item.firstAt) item.firstAt = row.timestamp;
+    }
+  }
+  for (const requestId of Object.keys(requests)) {
+    const item = requests[requestId];
+    item.spanMs = Math.max(0, item.end - item.start);
+    item.modelMs = Math.max(0, item.spanMs - item.toolMs);
+    delete item.start;
+    delete item.end;
+  }
+  return { requests, rows: rows.length, invalid };
+}
+
+module.exports = { tokenStatsCacheReady, scanTokenStats, scanTokenStatsCached, scanConversationRequests, findConversationFile, findUsage, walkJsonl, dateBounds };

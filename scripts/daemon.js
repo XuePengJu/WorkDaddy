@@ -145,7 +145,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditHistorySync, historyRange } = require('./credit-history-sync.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
-const { scanTokenStatsCached, tokenStatsCacheReady } = require('./token-stats.js');
+const { scanTokenStatsCached, tokenStatsCacheReady, scanConversationRequests, findConversationFile } = require('./token-stats.js');
 const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
@@ -537,8 +537,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
 // 1.2.72：积分代理补最低档思考——请求没带档位、带 null/空值、或写成关闭时落
 //         low，修「客户端思考配置存不住，于是永远不思考」。
-const DAEMON_VERSION = '1.2.76';
-const DAEMON_BUILD_ID = 'release-1.2.76-credit-proxy-default-effort';
+const DAEMON_VERSION = '1.2.77';
+const DAEMON_BUILD_ID = 'release-1.2.77-credit-proxy-error-codes';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -11264,6 +11264,23 @@ function handleApi(req, res) {
       const status = /日期范围|开始日期/.test(String(e && e.message)) ? 400 : 500;
       return json(res, status, { ok: false, error: e.message || '读取会话统计失败' });
       });
+  }
+
+  if (req.method === 'GET' && p === '/api/conversation-tokens') {
+    // 只读接口：渲染层给「历史回复」回填 token 数与生成耗时。
+    // 官方把 usage 从历史消息里剥掉了（store 里 usage 为 null），但会话 JSONL 仍按
+    // conversationRequestId 保留逐步用量与时间戳，这里是唯一还能拿到真实数字的地方。
+    const conversationId = String(url.searchParams.get('conversationId') || '').trim();
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(conversationId)) return json(res, 400, { ok: false, error: '会话 ID 无效' });
+    const file = findConversationFile(PROFILE.dataRoot, conversationId);
+    if (!file) return json(res, 200, { ok: true, conversationId, requests: {}, missing: true });
+    try {
+      const scanned = scanConversationRequests(file);
+      return json(res, 200, { ok: true, conversationId, requests: scanned.requests, rows: scanned.rows });
+    } catch (e) {
+      log('[conversation-tokens] 读取会话用量失败: ' + e.message);
+      return json(res, 500, { ok: false, error: '读取会话用量失败' });
+    }
   }
 
   if (req.method === 'GET' && p === '/api/credit-stats') {
