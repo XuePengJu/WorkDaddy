@@ -539,8 +539,8 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //         low，修「客户端思考配置存不住，于是永远不思考」。
 // 版本号 = 依赖的上游版本 + 自己的 beta 序号（上游 1.2.19 时我们出 1.2.19.beta1、.beta2…），
 // 这样既能一眼看出基于哪一版上游，又不会和上游的 1.2.2x 系列撞号。
-const DAEMON_VERSION = '1.2.19.beta1';
-const DAEMON_BUILD_ID = 'release-1.2.19.beta1-credit-proxy-error-codes';
+const DAEMON_VERSION = '1.2.19.beta2';
+const DAEMON_BUILD_ID = 'release-1.2.19.beta2-reply-throughput-from-gateway';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
