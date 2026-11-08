@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { createHash } = require('node:crypto');
 
 const TOKEN_FIELDS = {
@@ -579,10 +580,108 @@ function scanConversationRequests(file) {
     const item = requests[requestId];
     item.spanMs = Math.max(0, item.end - item.start);
     item.modelMs = Math.max(0, item.spanMs - item.toolMs);
+    // 保留轮次起止时间：要把「接口侧每次请求」按时间窗配到具体这一轮上
+    item.startAt = item.start;
+    item.endAt = item.end;
     delete item.start;
     delete item.end;
   }
   return { requests, rows: rows.length, invalid };
 }
 
-module.exports = { tokenStatsCacheReady, scanTokenStats, scanTokenStatsCached, scanConversationRequests, findConversationFile, findUsage, walkJsonl, dateBounds };
+/* ================= 接口侧真实速度（magpie usage.jsonl） =================
+ * 本地模型网关 magpie（默认 127.0.0.1:3425）每完成一次模型请求就落一行：
+ *   session（= 会话 ID）、t（请求开始时刻）、ms（总耗时）、ttft_ms（首字延迟）、
+ *   out（输出 tokens）、reasoning（其中思考 tokens）。
+ * 速度口径 out ÷ (ms − ttft_ms)：分子分母都是接口自己测的，与「接口看板」同源。
+ * 渲染层按 DOM 增长推算的那套受 raf 合并与节流影响，分母系统性偏大、数字偏低，
+ * 所以完成态一律以这里的数为准。
+ */
+const MAGPIE_USAGE_CACHE = { mtimeMs: 0, size: 0, rows: null };
+
+function magpieUsagePath() {
+  const home = process.env.HOME || (os.homedir ? os.homedir() : '');
+  return path.join(home, '.config', 'magpie', 'usage.jsonl');
+}
+
+function scanMagpieUsage(file) {
+  const target = file || magpieUsagePath();
+  let stat;
+  try { stat = fs.statSync(target); } catch (_) { return []; }
+  if (MAGPIE_USAGE_CACHE.rows && MAGPIE_USAGE_CACHE.mtimeMs === stat.mtimeMs
+      && MAGPIE_USAGE_CACHE.size === stat.size) return MAGPIE_USAGE_CACHE.rows;
+  let text = '';
+  try { text = fs.readFileSync(target, 'utf8'); } catch (_) { return []; }
+  const rows = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim() || line.charCodeAt(0) !== 123) continue;
+    let row;
+    try { row = JSON.parse(line); } catch (_) { continue; }
+    const session = String(row.session || row.native_session || '').trim();
+    const at = Date.parse(row.t || '');
+    const ms = Number(row.ms) || 0;
+    const ttft = Number(row.ttft_ms) || 0;
+    const out = Number(row.out) || 0;
+    if (!session || !Number.isFinite(at) || ms <= 0 || out <= 0) continue;
+    rows.push({
+      session, at, ms, ttft, out,
+      reasoning: Number(row.reasoning) || 0,
+      model: String(row.served || row.model || ''),
+      // ttft 缺失（非流式或旧记录）时剥不掉 prefill，genMs=0 表示这行不参与速度口径
+      genMs: ttft > 0 && ms > ttft ? ms - ttft : 0,
+    });
+  }
+  rows.sort((a, b) => a.at - b.at);
+  MAGPIE_USAGE_CACHE.mtimeMs = stat.mtimeMs;
+  MAGPIE_USAGE_CACHE.size = stat.size;
+  MAGPIE_USAGE_CACHE.rows = rows;
+  return rows;
+}
+
+/** 把接口侧请求按时间窗配到每一轮（conversationRequestId）上。
+ *  同一会话内请求串行、两边都按时间单调，所以「窗口内按顺序取」足够可靠；
+ *  每条接口记录只归属一轮（命中即消费），不会重复计数。 */
+function pairMagpieRequests(turns, rows) {
+  const out = Object.create(null);
+  const list = Array.isArray(rows) ? rows.slice() : [];
+  const turnIds = Object.keys(turns || {});
+  if (!list.length || !turnIds.length) return out;
+  const ordered = turnIds.map((id) => ({ id, turn: turns[id] }))
+    .filter((item) => item.turn && Number.isFinite(item.turn.startAt))
+    .sort((a, b) => a.turn.startAt - b.turn.startAt);
+  let cursor = 0;
+  for (const item of ordered) {
+    const from = item.turn.startAt - 1500;
+    const to = Number(item.turn.endAt) > 0 ? item.turn.endAt + 2000 : item.turn.startAt + 600000;
+    while (cursor < list.length && list[cursor].at < from) cursor += 1;
+    const hit = [];
+    let probe = cursor;
+    while (probe < list.length && list[probe].at <= to) { hit.push(list[probe]); probe += 1; }
+    if (hit.length) cursor = probe;
+    const usable = hit.filter((row) => row.genMs > 0);
+    if (!usable.length) continue;
+    const rates = usable.map((row) => row.out / row.genMs * 1000);
+    out[item.id] = {
+      requests: usable.length,
+      tokens: usable.reduce((sum, row) => sum + row.out, 0),
+      genMs: usable.reduce((sum, row) => sum + row.genMs, 0),
+      // 逐请求平均：与接口看板一致，也最贴近「每次请求有多快」
+      tps: rates.reduce((sum, rate) => sum + rate, 0) / rates.length,
+      rates: rates.map((rate) => Math.round(rate)),
+      ttft: usable.map((row) => row.ttft),
+      at: usable.map((row) => row.at),
+      model: usable[usable.length - 1].model,
+    };
+  }
+  return out;
+}
+
+/** 某会话在接口侧的真实速度：按 session 过滤后再配对到各轮。 */
+function magpieRatesForConversation(conversationId, turns, file) {
+  const id = String(conversationId || '').trim();
+  if (!id) return Object.create(null);
+  const rows = scanMagpieUsage(file).filter((row) => row.session === id);
+  return pairMagpieRequests(turns, rows);
+}
+
+module.exports = { tokenStatsCacheReady, scanTokenStats, scanTokenStatsCached, scanConversationRequests, findConversationFile, findUsage, walkJsonl, dateBounds, scanMagpieUsage, pairMagpieRequests, magpieRatesForConversation, magpieUsagePath };

@@ -3429,17 +3429,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
      * 数据来源是官方 messageStore 里的 assistant 消息：usage.outputTokens 为精确值
      * （官方每步都写，流式过程中递增），内容块文本长度用来判断「是否正在吐字」。
      * 官方自己算过 tokensPerSecond 但只写进 evlog 事件日志，没有接到界面上，这里补一个角标。
-     * 解码时长只累计「内容在增长」的间隔；工具执行、等上屏、思考停顿不计入，
-     * 否则一条跑十几步工具的消息会被摊平成个位数 tok/s，失去参考意义。
+     * 口径：一次模型请求 = 一段（segment）。分母只用「这一段第一包到最后一包」的累计间隔，
+     * 所以 prefill、排队、工具执行、思考停顿都不进分母；分子只算同一段里真正观测到的 token。
+     * 起点不可知的那一批 token（首包、跨段、间隔过大、速率物理上不可能、字数估算切到官方
+     * usage 的第一批）连同对应时间一起丢弃——旧实现只丢时间不丢 token，实测把真实
+     * 155 tok/s 放大成 708 tok/s。
      * 历史消息（本次运行没观测到生成过程）只显示 token 数，不臆造速度。 */
     var THROUGHPUT_ENABLED_KEY = 'workdaddy.session.throughputEnabled';
     var throughputEnabled = true;
     try { throughputEnabled = localStorage.getItem(THROUGHPUT_ENABLED_KEY) !== '0'; } catch (_) {}
-    // 两次内容增长的间隔超过该值视为「不在吐字」，这段时间不计入解码时长
-    var THROUGHPUT_IDLE_GAP_MS = 1500;
-    // 少于该解码时长的样本没有统计意义（一问一答一两个 chunk），只显示 token 数
-    var THROUGHPUT_MIN_DECODE_MS = 400;
-    var THROUGHPUT_LIVE_SAMPLES = 8;
+    // 两次内容增长的间隔超过该值，视为「上一次请求已经结束、新的一次请求开始了」，前后不拼成一段
+    var THROUGHPUT_STEP_GAP_MS = 1200;
+    // 单批 token 的物理上限（tok/s）。超过它说明这一批是攒着一起到的（流被批量合并），
+    // 起点时刻不可知，必须整批丢弃，否则就是几百 token ÷ 几十毫秒
+    var THROUGHPUT_MAX_BURST_TPS = 4000;
+    // 一段（一次请求）至少跑这么久才算得出速度（太短只有一两个 chunk，没有统计意义）
+    var THROUGHPUT_MIN_SEG_MS = 300;
+    // 实时显示的门槛：段跨度不足这么久时只显示 token 数。
+    // 本地观测拿不到 chunk 级时间戳，短段误差大（实测 <1s 的段能算成 300+），
+    // 所以放宽到 800ms，宁可晚一点出数，也不刷一个不可信的数字。
+    var THROUGHPUT_MIN_LIVE_MS = 800;
     var THROUGHPUT_BOLT_SVG = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M7 0 2 7h3.1L4 12l6-7H6.9L7 0Z"/></svg>';
     var throughput = {
       enabled: throughputEnabled,
@@ -3449,7 +3458,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       syncTimer: null,
       // 历史回填：官方把 usage 从历史消息里剥掉了，token 数与生成耗时只能从会话 JSONL 拿。
       // 一次只缓存当前会话，切走即清空，避免 requestId 张冠李戴。
-      history: { conversationId: '', requests: null, loadingId: '' },
+      // magpie：同一会话在接口侧的真实速度（接口自己测的 ms/ttft_ms/out），有就优先用。
+      history: { conversationId: '', requests: null, magpie: null, loadingId: '', loadedAt: 0 },
     };
     function writeThroughputEnabled(enabled) {
       throughputEnabled = !!enabled;
@@ -3490,31 +3500,46 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       var rest = Math.round(seconds % 60);
       return minutes + 'm' + (rest ? rest + 's' : '');
     }
-    // 流式早期官方还没下发 usage（outputTokens 为空），只有正文在涨。
-    // 用「已完成消息的 tokens/字符」真实比值校准字符→token 估算，样本足够前用混合默认值。
-    var THROUGHPUT_DEFAULT_TOKENS_PER_CHAR = 0.45;
-    var throughputCalibration = { tokens: 0, chars: 0 };
-    function throughputTokensPerChar() {
-      if (throughputCalibration.chars >= 300 && throughputCalibration.tokens > 0) {
-        var ratio = throughputCalibration.tokens / throughputCalibration.chars;
-        if (ratio > 0.05 && ratio < 2) return ratio;
-      }
-      return THROUGHPUT_DEFAULT_TOKENS_PER_CHAR;
+    // 速度只用官方 usage 的精确 token，不再用「字数 × 比值」估算。
+    // 实测这个客户端的 usage 不是流式下发的，只在每步结束时一次性补报：
+    // 估算只能给出量级，实测能差 2 倍（估算 315 而真实 155），宁可不显示也不虚报。
+    /** 单段（= 一次模型请求）的速度：分子只认精确 token，分母是本段首包到末包。 */
+    function throughputSegRate(seg) {
+      if (!seg || seg.ms < THROUGHPUT_MIN_SEG_MS || seg.tokens <= 0) return null;
+      return seg.tokens / seg.ms * 1000;
     }
-    /** 近期速度：只取最近若干次「内容增长」窗口，忽略停顿，避免数字来回跳。 */
+    /** 逐请求速度列表：每段各算一个，供「均速」与 tooltip 明细共用。 */
+    function throughputSegRates(rec) {
+      var out = [];
+      var segments = (rec && rec.segments) || [];
+      for (var i = 0; i < segments.length; i++) {
+        var rate = throughputSegRate(segments[i]);
+        if (rate !== null) out.push(rate);
+      }
+      return out;
+    }
+    /** 近期速度：只看当前这一段，且必须已经有精确 usage 才算得出来。
+     *  还在等 usage 时返回 null，由角标冻结上一步的精确值，不做任何估算。 */
     function throughputLiveRate(rec) {
-      var sumTokens = 0;
-      var sumMs = 0;
-      for (var i = 0; i < rec.samples.length; i++) {
-        sumTokens += rec.samples[i].tok;
-        sumMs += rec.samples[i].ms;
-      }
-      if (sumMs < 120 || sumTokens <= 0) return null;
-      return sumTokens / sumMs * 1000;
+      var seg = rec && rec.seg;
+      if (!seg || seg.ms < THROUGHPUT_MIN_LIVE_MS || seg.tokens <= 0) return null;
+      return seg.tokens / seg.ms * 1000;
     }
+    /** 完成后的速度：逐请求分别算再取平均（每条请求长短差很多，不加权更贴近单次感受）。 */
     function throughputFinalRate(rec) {
-      if (rec.activeMs < THROUGHPUT_MIN_DECODE_MS || rec.tokens <= 0) return null;
-      return rec.tokens / rec.activeMs * 1000;
+      if (!rec) return null;
+      // 接口实测值即最终答案
+      if (rec.fromApi && rec.apiTps > 0) return rec.apiTps;
+      // 历史回填只有整轮数字（含每步启动开销），沿用旧口径，靠「均速」措辞区分
+      if (rec.fromHistory) {
+        if (rec.activeMs < THROUGHPUT_MIN_SEG_MS || rec.tokens <= 0) return null;
+        return rec.tokens / rec.activeMs * 1000;
+      }
+      var rates = throughputSegRates(rec);
+      if (!rates.length) return null;
+      var sum = 0;
+      for (var i = 0; i < rates.length; i++) sum += rates[i];
+      return sum / rates.length;
     }
     /**
      * 从会话 JSONL 换回来的历史用量里取这一条回复的数字。
@@ -3539,9 +3564,34 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         steps: Number(item.steps) || 0,
       };
     }
-    function loadThroughputHistory(conversationId) {
+    /**
+     * 接口侧真实速度（magpie usage.jsonl，daemon 已按轮配对）：有就直接用。
+     * 口径 out ÷ (ms − ttft_ms)，分子分母都是接口自己测的，与接口看板同源。
+     */
+    function throughputApiRecord(message) {
+      if (!message || !throughput.enabled) return null;
+      var magpie = throughput.history.magpie;
+      if (!magpie || !throughput.history.conversationId) return null;
+      if (String(message.conversationId || '') !== throughput.history.conversationId) return null;
+      var requestId = String(message.requestId || (message.extra && message.extra.conversationRequestId) || '');
+      if (!requestId) return null;
+      var item = magpie[requestId];
+      if (!item || !(Number(item.tps) > 0) || !(Number(item.tokens) > 0)) return null;
+      return {
+        tokens: Number(item.tokens) || 0,
+        tps: Number(item.tps) || 0,
+        rates: Array.isArray(item.rates) ? item.rates : [],
+        genMs: Number(item.genMs) || 0,
+        requests: Number(item.requests) || 0,
+        weighTps: item.genMs > 0 ? Number(item.tokens) / (Number(item.genMs) / 1000) : 0,
+      };
+    }
+    function loadThroughputHistory(conversationId, force) {
       var id = String(conversationId || '');
       if (!id || throughput.history.loadingId === id) return;
+      // 同一会话刚拉过就别再打接口（force 用于「请求刚落盘」时的补拉）
+      if (!force && throughput.history.conversationId === id
+          && Date.now() - throughput.history.loadedAt < 8000) return;
       throughput.history.loadingId = id;
       api('/api/conversation-tokens?conversationId=' + encodeURIComponent(id))
         .then(function (payload) {
@@ -3550,6 +3600,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (!payload || !payload.requests) return;
           throughput.history.conversationId = id;
           throughput.history.requests = payload.requests;
+          throughput.history.magpie = payload.magpie || null;
+          throughput.history.loadedAt = Date.now();
+          // 这一轮补拉后仍没有接口值的记录，记一次「空手而归」，避免不走 magpie 的
+          // 消息让补拉无限循环（3 次拿不到就认定这个会话拿不到接口值）。
+          var known = Object.keys(throughput.records);
+          for (var i = 0; i < known.length; i++) {
+            var item = throughput.records[known[i]];
+            if (item && item.done && !item.fromApi) item.apiMiss = (item.apiMiss || 0) + 1;
+          }
           // 回填后立刻刷一次，不用等下一拍兜底 tick
           if (alive) scheduleThroughputBadges();
         })
@@ -3564,7 +3623,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       // 换会话先清空，避免上一个会话的 requestId 命中新消息
       throughput.history.conversationId = '';
       throughput.history.requests = null;
+      throughput.history.magpie = null;
+      throughput.history.loadedAt = 0;
       loadThroughputHistory(id);
+    }
+    /** 有已完成但还没拿到接口值的回复时，隔几秒补拉一次（接口行要请求结束才落盘）。 */
+    function throughputNeedsApiRefresh() {
+      if (!throughput.enabled) return false;
+      if (!throughput.history.conversationId) return false;
+      if (Date.now() - throughput.history.loadedAt < 4000) return false;
+      var ids = Object.keys(throughput.records);
+      for (var i = 0; i < ids.length; i++) {
+        var rec = throughput.records[ids[i]];
+        // apiMiss>=3：这个会话在接口侧没有对应行（例如没走 magpie 的模型），别再补拉
+        if (rec && rec.done && !rec.fromApi && (rec.apiMiss || 0) < 3) return true;
+      }
+      return false;
     }
     /** 观察一次 store 快照：累计解码时长、首次吐字时间、完成状态。 */
     function throughputObserve(state) {
@@ -3586,23 +3660,31 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           if (!tokens && !chars) continue;
           // 历史消息：官方已明确 complete 且没有 usage，用会话 JSONL 的真实数字回填，
           // 否则这条回复将永远没有角标（重启后所有回复都是这个状态）。
-          var historyItem = !tokens && String(message.id) !== streamingId ? throughputHistoryRecord(message) : null;
-          rec = throughput.records[id] = historyItem ? {
+          var apiItem = !tokens && String(message.id) !== streamingId ? throughputApiRecord(message) : null;
+          var historyItem = !apiItem && !tokens && String(message.id) !== streamingId ? throughputHistoryRecord(message) : null;
+          rec = throughput.records[id] = (apiItem || historyItem) ? {
             id: id,
-            tokens: historyItem.tokens,
+            tokens: (apiItem || historyItem).tokens,
             chars: chars,
-            activeMs: historyItem.modelMs,
-            firstChangeAt: historyItem.firstAt,
+            activeMs: apiItem ? apiItem.genMs : historyItem.modelMs,
+            firstChangeAt: apiItem ? 0 : historyItem.firstAt,
             lastChangeAt: 0,
             createTime: Number(message.createTime) || 0,
             done: true,
-            doneAt: historyItem.endAt,
-            samples: [],
-            fromHistory: true,
+            doneAt: apiItem ? 0 : historyItem.endAt,
+            segments: [],
+            seg: null,
+            // 接口值、JSONL 回算都属「事后来源」，与实时观测不同源，措辞要区分
+            fromHistory: !apiItem,
+            fromApi: !!apiItem,
+            apiTps: apiItem ? apiItem.tps : 0,
+            apiRates: apiItem ? apiItem.rates : null,
+            apiGenMs: apiItem ? apiItem.genMs : 0,
+            apiRequests: apiItem ? apiItem.requests : 0,
             missedStart: true,
             lastRate: 0,
-            toolMs: historyItem.toolMs,
-            spanMs: historyItem.spanMs,
+            toolMs: apiItem ? 0 : historyItem.toolMs,
+            spanMs: apiItem ? 0 : historyItem.spanMs,
           } : {
             id: id,
             tokens: 0,
@@ -3613,19 +3695,51 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             createTime: Number(message.createTime) || 0,
             done: false,
             doneAt: 0,
-            samples: [],
+            segments: [],
+            seg: null,
             fromHistory: false,
+            fromApi: false,
+            apiTps: 0,
+            apiRates: null,
+            apiGenMs: 0,
+            apiRequests: 0,
             // 首次看到它时正文已经有内容，说明这条的生成过程我们从中间才开始看，
             // 首字时间无法还原（实测会出现「首字 24m42s」这种胡说）
             missedStart: chars > 0,
             lastRate: 0,
           };
         }
+        // 接口侧的数是最终答案：实时观测完成的记录，等 magpie 那一行落盘后覆盖掉本地估算。
+        // （接口行要请求结束才写，所以完成那一刻通常还没有，靠下面的节流重拉补上）
+        if (rec && !rec.fromApi && rec.done) {
+          var lateApi = throughputApiRecord(message);
+          if (lateApi) {
+            rec.fromApi = true;
+            rec.tokens = lateApi.tokens || rec.tokens;
+            rec.apiTps = lateApi.tps;
+            rec.apiRates = lateApi.rates;
+            rec.apiGenMs = lateApi.genMs;
+            rec.apiRequests = lateApi.requests;
+            rec.seg = null;
+          }
+        }
         // 回填是异步到的：先前已按「无 usage」建过记录，这里补升一次，
-        // 否则第一次渲染时 JSONL 还没回来，角标会一直是空的。
-        if (rec && !rec.fromHistory && !rec.tokens && rec.chars > 0 && String(message.id) !== streamingId) {
-          var lateHistory = throughputHistoryRecord(message);
-          if (lateHistory) {
+        // 否则第一次渲染时 JSONL 还没回来，角标会一直是空的。接口值优先于 JSONL 回算。
+        if (rec && !rec.fromApi && !rec.tokens && rec.chars > 0 && String(message.id) !== streamingId) {
+          var lateApi2 = throughputApiRecord(message);
+          var lateHistory = lateApi2 ? null : throughputHistoryRecord(message);
+          if (lateApi2) {
+            rec.fromApi = true;
+            rec.fromHistory = false;
+            rec.tokens = lateApi2.tokens;
+            rec.apiTps = lateApi2.tps;
+            rec.apiRates = lateApi2.rates;
+            rec.apiGenMs = lateApi2.genMs;
+            rec.apiRequests = lateApi2.requests;
+            rec.done = true;
+            rec.segments.length = 0;
+            rec.seg = null;
+          } else if (lateHistory) {
             rec.fromHistory = true;
             rec.tokens = lateHistory.tokens;
             rec.chars = chars;
@@ -3635,30 +3749,53 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             rec.doneAt = lateHistory.endAt || rec.doneAt;
             rec.toolMs = lateHistory.toolMs;
             rec.spanMs = lateHistory.spanMs;
-            rec.samples.length = 0;
+            rec.segments.length = 0;
+            rec.seg = null;
           }
         }
         // 回填出来的记录不再参与实时累计：它的时长口径是「事后按步回算」，与实时观测不同源
         if (!rec.fromHistory && (tokens > rec.tokens || chars > rec.chars)) {
           var deltaTokens = Math.max(0, tokens - rec.tokens);
           var deltaChars = Math.max(0, chars - rec.chars);
-          // 有精确 token 增量就用精确值；只有正文在涨时按校准比值折算
-          var delta = deltaTokens > 0 ? deltaTokens : deltaChars * throughputTokensPerChar();
+          var gap = rec.lastChangeAt ? now - rec.lastChangeAt : 0;
+          // 只涨 token、不涨正文 = 官方在补报「刚结束那一段」的用量（实测 usage 不是流式
+          // 下发的，每步结束才给一次）。这一批是该段的结算，归给上一段，它的时间窗口已经量好。
+          var settled = !rec.done && deltaTokens > 0 && deltaChars === 0;
+          if (settled) {
+            var target = rec.seg || (rec.segments.length ? rec.segments[rec.segments.length - 1] : null);
+            if (target && target.tokens === 0 && target.ms >= THROUGHPUT_MIN_SEG_MS) {
+              target.tokens = deltaTokens;
+              // 结算过就把这段封口：下一步的内容增长必须另起一段，不能再往这段里加 token
+              target.closed = true;
+            }
+          }
+          // 起始时刻不可知的情况，时间与 token 都不进任何一段，直接开新段：
+          //   · 首包：还看不出这一段从哪一刻开始吐
+          //   · 间隔 > STEP_GAP：中间在跑工具、排队或思考停顿
+          //   · 速率物理上不可能：流被批量合并后一起送达
+          // 旧实现只把时间丢掉、token 留着，于是几百 token ÷ 几十毫秒 = 708 tok/s。
+          var untimed = !settled && ((rec.seg && rec.seg.closed) || !rec.lastChangeAt || gap <= 0 ||
+            gap > THROUGHPUT_STEP_GAP_MS ||
+            deltaTokens > (gap / 1000) * THROUGHPUT_MAX_BURST_TPS + 8);
+          if (!rec.done) {
+            if (untimed) {
+              // 开新的一段（= 新的一次模型请求），首批 token 不计入分子
+              rec.seg = { firstAt: now, lastAt: now, tokens: 0, chars: 0, ms: 0 };
+              rec.segments.push(rec.seg);
+            } else if (!settled) {
+              if (!rec.seg) {
+                rec.seg = { firstAt: rec.lastChangeAt || now, lastAt: rec.lastChangeAt || now, tokens: 0, chars: 0, ms: 0 };
+                rec.segments.push(rec.seg);
+              }
+              rec.seg.tokens += deltaTokens;
+              rec.seg.chars += deltaChars;
+              rec.seg.ms += gap;
+              rec.seg.lastAt = now;
+            }
+          }
           if (!rec.firstChangeAt) {
             rec.firstChangeAt = now;
             if (!rec.createTime) rec.createTime = Number(message.createTime) || 0;
-          } else if (!rec.done) {
-            var gap = now - rec.lastChangeAt;
-            // 停顿不计入解码时长；对应样本也不参与近期速度
-            if (gap > 0 && gap <= THROUGHPUT_IDLE_GAP_MS) {
-              rec.activeMs += gap;
-              if (delta > 0) {
-                rec.samples.push({ tok: delta, ms: gap });
-                if (rec.samples.length > THROUGHPUT_LIVE_SAMPLES) rec.samples.shift();
-              }
-            } else if (gap > THROUGHPUT_IDLE_GAP_MS) {
-              rec.samples.length = 0;
-            }
           }
           rec.lastChangeAt = now;
           rec.tokens = Math.max(rec.tokens, tokens);
@@ -3668,11 +3805,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           // 完成时间只记第一次：每拍都刷会把 doneAt 往前推，等于把「生成耗时」算成实时钟
           if (!rec.done) rec.doneAt = now;
           rec.done = true;
-          rec.samples.length = 0;
-          if (rec.tokens > 0 && rec.chars > 0) {
-            throughputCalibration.tokens += rec.tokens;
-            throughputCalibration.chars += rec.chars;
-          }
+          rec.seg = null;
         }
       }
     }
@@ -3681,7 +3814,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!rec.done) {
         var live = throughputLiveRate(rec);
         if (live !== null) {
-          // 记住最后一次算得出的速度：工具执行/长时间停顿会把窗口样本清空，
+          // 记住最后一次算得出的速度：工具执行/长时间停顿会让当前段作废，
           // 那段时间直接消失会让角标看起来像坏了，改为冻结在一个暗色数字上。
           rec.lastRate = live;
           return Math.round(live) + ' tok/s';
@@ -3691,15 +3824,33 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       var rate = throughputFinalRate(rec);
       if (rate !== null) {
-        // 回填的是「整轮平均」（含每步启动开销），与实时吐字瞬时速度不是一回事，
-        // 角标上直接标出「均速」，避免两个数字摆在一起互相打架（实测差 2 倍）
+        // 接口实测值不做任何修饰：它就是你看板看到的那个数
+        if (rec.fromApi && rec.apiTps > 0) return Math.round(rec.apiTps) + ' tok/s';
+        // JSONL 回算的是「整轮平均」（含每步启动开销），与实时吐字速度不同源，标注「均速」
         return rec.fromHistory ? '均速 ' + Math.round(rate) + ' tok/s' : Math.round(rate) + ' tok/s';
       }
+      if (rec.fromApi && rec.apiTps > 0) return Math.round(rec.apiTps) + ' tok/s';
       return rec.tokens > 0 ? throughputFormatTokens(rec.tokens) + ' tok' : '';
     }
     function throughputBadgeTitle(rec) {
       if (!rec) return '';
-      // 回填口径与实时观测不同源：用语必须区分，否则「解码 145s」和「总耗时 191s」会互相打架
+      // 接口实测：口径最硬，直接说明来源，避免和 JSONL 的「均速」混为一谈
+      if (rec.fromApi) {
+        var api = ['输出 ' + throughputFormatTokens(rec.tokens) + ' tok'];
+        api.push('接口实测 ' + Math.round(rec.apiTps) + ' tok/s（逐请求平均）');
+        if (rec.apiRates && rec.apiRates.length) {
+          var list = [];
+          for (var a = 0; a < rec.apiRates.length && a < 6; a++) list.push(rec.apiRates[a]);
+          api.push(rec.apiRates.length > 6 ? list.join('/') + '… 共 ' + rec.apiRates.length + ' 次' : list.join('/') + ' tok/s');
+        }
+        if (rec.apiGenMs > 0) api.push('生成合计 ' + throughputFormatDuration(rec.apiGenMs));
+        if (rec.apiGenMs > 0 && rec.tokens > 0) {
+          api.push('加权 ' + Math.round(rec.tokens / (rec.apiGenMs / 1000)) + ' tok/s');
+        }
+        api.push('口径 = 输出 ÷（总耗时 − 首字）');
+        return api.join(' · ');
+      }
+      // JSONL 回算：整轮口径（含每步启动开销），措辞标「均速」与接口值区分
       if (rec.fromHistory) {
         var hist = ['输出 ' + throughputFormatTokens(rec.tokens) + ' tok'];
         var histRate = throughputFinalRate(rec);
@@ -3712,10 +3863,26 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       }
       var parts = [];
       if (rec.tokens > 0) parts.push('输出 ' + throughputFormatTokens(rec.tokens) + ' tok');
-      var rate = rec.done ? throughputFinalRate(rec) : throughputLiveRate(rec);
-      if (rate !== null) parts.push('解码 ' + throughputFormatDuration(rec.activeMs));
-      else if (rec.done && rec.tokens > 0) parts.push('生成过程未被观测，无速度数据');
-      else if (!rec.done && rec.lastRate > 0) parts.push('停顿中，显示上一次速度');
+      // 速度口径：逐请求（一次模型请求 = 一段），只算首包到末包，工具/等待/首字全不计
+      var rates = throughputSegRates(rec);
+      var seg = rec.seg;
+      var timedMs = 0;
+      var segs = rec.segments || [];
+      for (var i = 0; i < segs.length; i++) timedMs += segs[i].ms;
+      if (rec.done) {
+        if (rates.length) {
+          var shown = [];
+          for (var j = 0; j < rates.length && j < 4; j++) shown.push(Math.round(rates[j]) + ' tok/s');
+          parts.push((rates.length > 4 ? '逐请求 ' + rates.length + ' 次 · ' : '逐请求 ') + shown.join(' / '));
+          if (timedMs > 0) parts.push('吐字合计 ' + throughputFormatDuration(timedMs));
+        } else if (rec.tokens > 0) {
+          parts.push('生成过程未被观测，无速度数据');
+        }
+      } else if (seg && seg.ms >= THROUGHPUT_MIN_LIVE_MS && seg.tokens > 0) {
+        parts.push('本次请求已吐字 ' + throughputFormatDuration(seg.ms));
+      } else if (rec.lastRate > 0) {
+        parts.push('停顿中，显示上一次速度');
+      }
       // missedStart：我们从中间才开始看，首字时间无法还原，宁可不说
       if (!rec.missedStart && rec.firstChangeAt && rec.createTime && rec.firstChangeAt > rec.createTime) {
         parts.push('首字 ' + throughputFormatDuration(rec.firstChangeAt - rec.createTime));
@@ -3790,6 +3957,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         // 历史角标会长时间不出现，而 DOM 变更/流式更新是更可靠的触发点。
         var surface = usageSurface();
         if (surface) syncThroughputHistory(surface);
+        // 回复刚结束时接口那一行可能还没落盘，节流补拉一次把本地值换成接口实测值
+        if (surface && throughputNeedsApiRefresh()) loadThroughputHistory(String(surface.id || ''), true);
         syncThroughputBadges();
       }, 150);
     }

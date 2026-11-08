@@ -145,7 +145,7 @@ const { buildCreditResourceBody } = require('./credit-resource-queries.js');
 const { fetchUsageSinceAnchor, startOfLocalDay } = require('./credit-request-usage.js');
 const { createCreditHistorySync, historyRange } = require('./credit-history-sync.js');
 const { createCreditUsageStore } = require('./credit-usage-store.js');
-const { scanTokenStatsCached, tokenStatsCacheReady, scanConversationRequests, findConversationFile } = require('./token-stats.js');
+const { scanTokenStatsCached, tokenStatsCacheReady, scanConversationRequests, findConversationFile, magpieRatesForConversation } = require('./token-stats.js');
 const { classifyCheckinResult, checkinEndpointsForToken } = require('./checkin-result.js');
 const {
   DAY_MS: TOKEN_REFRESH_DAY_MS,
@@ -11278,7 +11278,16 @@ function handleApi(req, res) {
     if (!file) return json(res, 200, { ok: true, conversationId, requests: {}, missing: true });
     try {
       const scanned = scanConversationRequests(file);
-      return json(res, 200, { ok: true, conversationId, requests: scanned.requests, rows: scanned.rows });
+      // 接口侧真实速度：magpie 的 usage.jsonl 里 ms/ttft_ms/out 都是接口自己测的，
+      // 比渲染层按 DOM 增长推算准（后者受 raf 合并与节流影响，分母系统性偏大）。
+      // 只有该网关装了/走过这个会话时才带回 magpie；否则前端自动回退本地口径。
+      let magpie = null;
+      try {
+        magpie = magpieRatesForConversation(conversationId, scanned.requests);
+      } catch (e) {
+        log('[conversation-tokens] 读取接口侧速度失败: ' + e.message);
+      }
+      return json(res, 200, { ok: true, conversationId, requests: scanned.requests, rows: scanned.rows, magpie });
     } catch (e) {
       log('[conversation-tokens] 读取会话用量失败: ' + e.message);
       return json(res, 500, { ok: false, error: '读取会话用量失败' });
