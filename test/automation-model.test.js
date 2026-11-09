@@ -219,7 +219,8 @@ test('daemon selects and checks the model before sending, and ships the renderer
   assert.match(daemon, /if \(modelId && !sendSubmitted\) await confirmAutomationModel\(modelId/);
   assert.match(daemon, /restoreAutomationNewTaskPreference\(modelSelection\)/);
   assert.match(daemon, /selected && selected\.conversationId \? \{ conversationId: selected\.conversationId, accountUid \}/);
-  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+  // 版本号允许 .betaN 后缀（发布线 1.2.20.beta1），打包时会数字化成 1.2.20.1 写进 CFBundleVersion。
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+(?:\.beta\d+)?'/);
   const staging = fs.readFileSync(path.join(__dirname, '../scripts/build-mac-dmg.sh'), 'utf8');
   assert.match(staging, /automation-model\.js/);
 });

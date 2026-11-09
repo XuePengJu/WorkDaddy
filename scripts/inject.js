@@ -2157,6 +2157,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '启动本地网关（47900），恢复自定义模型': 'Start the local gateway (47900) to restore custom models',
     '终止': 'Stop',
     '启动': 'Start',
+    // —— 第十八批：速度角标新增的接口实测 / 加权 / 吐字合计文案 ——
+    // 「接口实测」后直接跟数字，因此译文保留尾随空格与源码拼接方式对齐。
+    '接口实测': 'API measured ',
+    'tok/s（逐请求平均）': 'tok/s (per-request avg)',
+    '生成合计': 'generation total ',
+    '加权': 'weighted ',
+    '吐字合计': 'emission total ',
+    '逐请求': 'per request ',
+    '口径 = 输出 ÷（总耗时 − 首字）': 'definition = output ÷ (total − first token)',
+    // 同批补齐：单段耗时明细、网关看板 iframe 标题、浏览器无法打开时的兜底提示
+    '本次请求已吐字': 'this request emitted ',
+    '网关看板': 'Gateway dashboard',
+    '无法打开浏览器，请手动访问': 'Could not open a browser. Open it manually: ',
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();

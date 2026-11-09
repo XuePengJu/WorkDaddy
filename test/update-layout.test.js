@@ -634,7 +634,11 @@ test('release scripts synchronize daemon version and build id', () => {
   assert.match(mac, /const DAEMON_BUILD_ID = 'release-/);
   assert.match(mac, /产物 daemon\.js 的版本或 Build ID/);
   assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleShortVersionString \$\{VERSION\}/);
-  assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleVersion \$\{VERSION\}/);
+  // 苹果要求 CFBundleVersion 逐段为整数，带 beta 段的发布号必须先数字化（1.2.20.beta1 -> 1.2.20.1），
+  // 所以这里写的是 BUNDLE_VERSION；同时要求脚本确实保留了数字化逻辑与 ${VERSION} 兜底。
+  assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleVersion \$\{BUNDLE_VERSION\}/);
+  assert.match(mac, /BUNDLE_VERSION="\$VERSION"/);
+  assert.match(mac, /BUNDLE_VERSION="\$\{BASH_REMATCH\[1\]\}\.\$\{BASH_REMATCH\[3\]\}"/);
   assert.doesNotMatch(mac, /VERSION_CODE/);
 });
 
@@ -1474,7 +1478,7 @@ test('session auto-copy plans preserve physical source rows while list APIs dedu
   assert.match(lib, /const allLineages = \{\}/);
   assert.match(daemon, /rows\.filter\(/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid, branchesByUid\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+(?:\.beta\d+)?'/);
 });
 
 test('session pane restores and renders persistent auto-copy progress', () => {
