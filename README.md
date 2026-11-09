@@ -187,7 +187,7 @@ bash scripts/workbuddy-ai-linux.sh relaunch
 git clone https://github.com/babygoton/WorkDaddy.git
 cd WorkDaddy
 bash scripts/install.sh        # 创建备份目录 + 启动守护进程
-bash scripts/relaunch-with-cdp.sh   # 把 WorkBuddy 切换到调试模式（端口 9222）
+bash scripts/relaunch-with-cdp.sh   # 把 WorkBuddy 切换到调试模式（默认端口 9226，9222 留给自己的 Chrome）
 ```
 
 四款客户端使用同一套 daemon，通过 profile 绑定客户端，不靠“第一个 CDP 端口”猜测目标：
@@ -227,7 +227,7 @@ macOS 可用 `WORKDADDY_BUILD_PROFILE` 指定上表中的单个 profile。Window
 **CDP 注入 · 不改官方安装包**
 
 ```
-┌─────────────┐  --remote-debugging-port=9222  ┌──────────────┐
+┌─────────────┐  --remote-debugging-port=9226  ┌──────────────┐
 │  WorkBuddy  │ <───────────────────────────> │  WorkDaddy   │
 │  (Electron) │       Chrome DevTools          │   daemon.js  │
 │             │        Protocol (CDP)          │              │
@@ -236,9 +236,9 @@ macOS 可用 `WORKDADDY_BUILD_PROFILE` 指定上表中的单个 profile。Window
 └─────────────┘                                └──────────────┘
 ```
 
-以下示意图以 WorkBuddy 国内版为例；四个 profile 的默认本地 API 端口依次为 `47832`、`47833`、`47834`、`47835`，渲染器 CDP 端口依次为 `9222`、`9223`、`9224`、`9225`。CodeBuddy 另用本机主进程调试端口 `9244` / `9245` 访问原生登录态与会话存储。
+以下示意图以 WorkBuddy 国内版为例；四个 profile 的默认本地 API 端口依次为 `47832`、`47833`、`47834`、`47835`，渲染器 CDP 端口依次为 `9226`、`9223`、`9224`、`9225`（`9222` 仍留在国内版的候选池里，方便旧实例继续工作）。CodeBuddy 另用本机主进程调试端口 `9244` / `9245` 访问原生登录态与会话存储。
 
-1. **不修改 WorkBuddy 二进制**：用 `launcher` 启动 WorkBuddy 时多带一个 `--remote-debugging-port=9222` 参数，**二进制与签名原封不动**。
+1. **不修改 WorkBuddy 二进制**：用 `launcher` 启动 WorkBuddy 时多带一个 `--remote-debugging-port=9226` 参数，**二进制与签名原封不动**。
 2. **守护进程通过 CDP 连接 WorkBuddy**：监听登录/认证网络事件 + 文件监听兜底，每次登录/刷新令牌都把当前登录信息按 `account.uid` 备份到稳定目录。
 3. **注入界面组件**：`Runtime.evaluate` 把 `inject.js` 推到渲染进程执行，在右下角渲染机器人按钮和多标签页面板（账号 / 主题 / 会话 / 模型 / 增强 / 自动化 / 电脑 / 关于 / 设置），按客户端能力显示，CodeBuddy 隐藏「增强」。
 4. **本地 HTTP API**：daemon 在 `127.0.0.1:47832` 起服务，组件通过 fetch 调用（账号切换、主题应用、成长进度查询、决策弹窗开关、休眠控制等）。

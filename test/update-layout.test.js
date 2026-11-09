@@ -433,7 +433,7 @@ test('Windows launcher keeps local port probing and profile CDP candidates defin
   assert.match(launcher, /profilePorts\.includes\(savedPort\)/);
   assert.match(launcher, /for \(const port of profilePorts\) add\(port\)/);
   assert.match(launcher, /function daemonRunning\(\)\s*\{\s*return portOpen\(UI_PORT\);/);
-  assert.match(launcher, /'workbuddy-cn': \[9222/);
+  assert.match(launcher, /'workbuddy-cn': \[9226, 9222/);
   assert.match(launcher, /'workbuddy-ai': \[9223/);
   assert.match(launcher, /isTargetForProfile\(target, PROFILE\)/);
 });
@@ -495,7 +495,7 @@ test('Windows launcher rejects a persisted sibling-profile CDP port', { skip: pr
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     const ports = JSON.parse(result.stdout);
-    assert.deepEqual(ports, [9222, 9226, 9227, 9228, 9229, 9230, 9231, 9232]);
+    assert.deepEqual(ports, [9226, 9222, 9227, 9228, 9229, 9230, 9231, 9232]);
     assert.equal(ports.includes(9223), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1326,8 +1326,8 @@ test('sensitive local API routes require an injected token and do not expose wil
 
 test('DevTools proxy uses the same persisted CDP port fallback as its URL endpoint', () => {
   const daemon = read('daemon.js');
-  assert.match(daemon, /const upstreamPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
-  assert.match(daemon, /devtoolsPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
+  assert.match(daemon, /const upstreamPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9226/);
+  assert.match(daemon, /devtoolsPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9226/);
   assert.match(daemon, /\^\[A-Za-z0-9_\-\]\{1,128\}\$/);
 });
 

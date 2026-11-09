@@ -35,7 +35,7 @@ const UA_CACHE_FILE = path.join(DATA_DIR, 'credit-proxy-ua.json');
 const BUILTIN_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) WorkBuddy/5.9.3 Chrome/138.0.7204.251 Electron/37.10.3 Safari/537.36';
 
-const DEFAULT_CDP_PORT = Number(process.env.WBSWITCH_CDP_PORT) || 9222;
+const DEFAULT_CDP_PORT = Number(process.env.WBSWITCH_CDP_PORT) || 9226;
 const DEFAULT_CDP_TIMEOUT_MS = 800;
 const DEFAULT_MEMORY_TTL_MS = 10 * 60 * 1000;
 

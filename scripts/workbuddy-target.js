@@ -90,7 +90,7 @@ function validateTarget(target, options = {}) {
     if (target[field] && !isAbsolute(target[field], platform)) throw new Error(`${field} 路径必须是 absolute path`);
   }
   const apiHost = validateApiHost(clean(target.apiHost));
-  const cdp = target.cdp || { mode: 'argument', port: profileId === 'workbuddy-ai' ? 9223 : 9222 };
+  const cdp = target.cdp || { mode: 'argument', port: profileId === 'workbuddy-ai' ? 9223 : 9226 };
   if (!cdp || (cdp.mode !== 'argument' && cdp.mode !== 'environment')) throw new Error('CDP mode 只能是 argument 或 environment');
   const cdpPort = Number(cdp.port);
   if (!Number.isInteger(cdpPort) || cdpPort < 1024 || cdpPort > 65535) throw new Error('CDP port 必须在 1024-65535 之间');
@@ -222,7 +222,7 @@ function buildTargetFromBinary(options = {}) {
     const posixPath = path.posix;
     const profileId = clean(options.profileId) || 'workbuddy-cn';
     const ai = profileId === 'workbuddy-ai';
-    const port = Number(options.cdpPort) || (ai ? 9223 : 9222);
+    const port = Number(options.cdpPort) || (ai ? 9223 : 9226);
     const home = options.home || os.homedir();
     const xdgData = clean(options.xdgDataHome) || clean(process.env.XDG_DATA_HOME) ||
       posixPath.join(home, '.local', 'share');
@@ -278,7 +278,7 @@ function buildTargetFromBinary(options = {}) {
     // 用它 join 会产出 C:\ 风格路径，被 darwin 的绝对路径校验拒绝。
     const posixPath = path.posix;
     const profileId = clean(options.profileId) || 'workbuddy-cn';
-    const port = Number(options.cdpPort) || (profileId === 'workbuddy-ai' ? 9223 : 9222);
+    const port = Number(options.cdpPort) || (profileId === 'workbuddy-ai' ? 9223 : 9226);
     const appName = posixPath.basename(binary.replace(/\/Contents\/MacOS\/[^/]+$/i, '')).replace(/\.app$/i, '');
     const home = options.home || os.homedir();
     const appSupport = posixPath.join(home, 'Library', 'Application Support');
@@ -359,7 +359,7 @@ function buildOfficialTargetFromBinary(options = {}) {
     lockVersion: false,
     processNames: [pathApi.basename(binary)],
     targetHints: [],
-    cdp: { mode: 'argument', port: profileId === 'workbuddy-ai' ? 9223 : 9222 },
+    cdp: { mode: 'argument', port: profileId === 'workbuddy-ai' ? 9223 : 9226 },
     capabilities: {},
   }, { platform });
 }
@@ -454,7 +454,7 @@ function configureFromInstaller(argv = process.argv.slice(2)) {
       binary,
       version,
       profileId,
-      cdpPort: profileId === 'workbuddy-ai' ? 9223 : 9222,
+      cdpPort: profileId === 'workbuddy-ai' ? 9223 : 9226,
       platform,
     });
     const saved = writeWorkBuddyTarget({ dataDir, profileId, target, platform });

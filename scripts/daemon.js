@@ -539,8 +539,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 版本号 = 自己的发布线 + beta 序号。上游 main 的 daemon 号已经走到 1.2.7x，
 // 但 WorkDaddy 对外发布按 1.2.19 -> 1.2.20 走，所以这里取 1.2.20.beta1：
 // 接上自己的发布线，又不和上游 1.2.7x 的 daemon 号混在一起。
-const DAEMON_VERSION = '1.2.20.beta1';
-const DAEMON_BUILD_ID = 'release-1.2.20.beta1-merge-main-credit-proxy';
+// 1.2.20.beta2：workbuddy-cn 首选 CDP 端口改 9226，把 9222 让给用户 Chrome 调试。
+const DAEMON_VERSION = '1.2.20.beta2';
+const DAEMON_BUILD_ID = 'release-1.2.20.beta2-cdp-port-9226';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
@@ -570,7 +571,8 @@ const IS_PORTABLE_WIN = IS_WIN && fs.existsSync(path.join(WORKDADDY_DIR_WIN, 'Wo
 const UI_PORT_BASE = parseInt(process.env.WBSWITCH_PORT || String(profileUiPortCandidates(PROFILE.id)[0]), 10);
 const ALLOW_UI_PORT_FALLBACK = !process.env.WBSWITCH_PORT;
 let ACTUAL_PORT = UI_PORT_BASE; // 实际监听端口（可能回退到当前 profile 的备用端口）
-const PROFILE_CDP_PORT = { 'workbuddy-cn': 9222, 'workbuddy-ai': 9223, 'codebuddy-cn': 9224, 'codebuddy-intl': 9225 };
+// workbuddy-cn 首选 9226：把 9222 让给用户自己的 Chrome 调试端口，避免两边抢同一个口。
+const PROFILE_CDP_PORT = { 'workbuddy-cn': 9226, 'workbuddy-ai': 9223, 'codebuddy-cn': 9224, 'codebuddy-intl': 9225 };
 const CDP_PORT_HINT = process.env.WBSWITCH_CDP_PORT
   ? parseInt(process.env.WBSWITCH_CDP_PORT, 10)
   : (Number(PROFILE.cdp && PROFILE.cdp.port) || PROFILE_CDP_PORT[PROFILE.id] || null);
@@ -12428,7 +12430,7 @@ function handleApi(req, res) {
   if (req.method === 'GET' && p === '/api/devtools-url') {
     return new Promise((resolve) => {
       const httpMod = require('http');
-      const devtoolsPort = cdp.port || readCdpPortFile() || CDP_PORT_HINT || 9222;
+      const devtoolsPort = cdp.port || readCdpPortFile() || CDP_PORT_HINT || 9226;
       httpMod.get('http://127.0.0.1:' + devtoolsPort + '/json/list', (r) => {
         let d = '';
         r.on('data', (c) => (d += c));
@@ -13225,7 +13227,7 @@ function startServer() {
       if (!m) { socket.destroy(); return; }
       // 与 /api/devtools-url 使用同一套回退顺序：CDP 尚未完成内存连接时，
       // 仍允许已持久化端口上的官方 DevTools 页面建立代理连接。
-      const upstreamPort = cdp.port || readCdpPortFile() || CDP_PORT_HINT || 9222;
+      const upstreamPort = cdp.port || readCdpPortFile() || CDP_PORT_HINT || 9226;
       if (!upstreamPort || !isAllowedDevtoolsOrigin(String(req.headers.origin || ''), upstreamPort)) {
         socket.destroy();
         return;

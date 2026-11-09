@@ -41,7 +41,7 @@ case "$PROFILE" in
   workbuddy-ai)   DEFAULT_DATA_DIR="$XDG_CONFIG_HOME/WorkDaddy/profiles/workbuddy-ai"; DEFAULT_UI_PORT=47833; DEFAULT_CDP_PORT=9223 ;;
   codebuddy-cn)   DEFAULT_DATA_DIR="$XDG_CONFIG_HOME/WorkDaddy/profiles/codebuddy-cn"; DEFAULT_UI_PORT=47834; DEFAULT_CDP_PORT=9224 ;;
   codebuddy-intl) DEFAULT_DATA_DIR="$XDG_CONFIG_HOME/WorkDaddy/profiles/codebuddy-intl"; DEFAULT_UI_PORT=47835; DEFAULT_CDP_PORT=9225 ;;
-  *)              PROFILE="workbuddy-cn"; DEFAULT_DATA_DIR="$XDG_CONFIG_HOME/WorkDaddy"; DEFAULT_UI_PORT=47832; DEFAULT_CDP_PORT=9222 ;;
+  *)              PROFILE="workbuddy-cn"; DEFAULT_DATA_DIR="$XDG_CONFIG_HOME/WorkDaddy"; DEFAULT_UI_PORT=47832; DEFAULT_CDP_PORT=9226 ;;
 esac
 export WBSWITCH_PROFILE="$PROFILE"
 

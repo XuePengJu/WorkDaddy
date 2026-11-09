@@ -164,7 +164,8 @@ test('macOS target configuration accepts non-exe process names', () => {
   });
   assert.equal(target.clientType, 'enterprise');
   assert.deepEqual(target.processNames, ['Electron']);
-  assert.deepEqual(target.cdp, { mode: 'argument', port: 9222 });
+  // workbuddy-cn 默认 CDP 端口 9226（9222 留给用户自己的 Chrome 调试）
+  assert.deepEqual(target.cdp, { mode: 'argument', port: 9226 });
 });
 
 test('macOS enterprise targets discover the client-specific auth file and API host', () => {
