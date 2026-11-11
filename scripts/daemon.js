@@ -539,14 +539,13 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.67：Windows 重启 GUI 客户端时不再请求隐藏主窗口，与冷启动保持一致。
 // 1.2.72：积分代理补最低档思考——请求没带档位、带 null/空值、或写成关闭时落
 //         low，修「客户端思考配置存不住，于是永远不思考」。
-// 版本号 = 自己的发布线 + beta 序号。上游 main 的 daemon 号已经走到 1.2.7x，
-// 但 WorkDaddy 对外发布按 1.2.19 -> 1.2.20 走，所以这里取 1.2.20.beta1：
-// 接上自己的发布线，又不和上游 1.2.7x 的 daemon 号混在一起。
+// 版本号 = 上游发布小版本 + 自己的 beta 序号。上游 daemon 内部号已走到 1.2.80，
+// 但对外发布号是 1.2.21；这里跟随上游发布号、beta 序号归自己，避免和 1.2.7x 内部号混淆。
 // 1.2.20.beta2：workbuddy-cn 首选 CDP 端口改 9226，把 9222 让给用户 Chrome 调试。
-// 1.2.20.beta3：合入上游 1.2.21（会话同步、shared target 检测、client-temp 冷启动清理）。
+// 1.2.21.beta1：合入上游 1.2.21（会话同步、shared target 检测、client-temp 冷启动清理）。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
-const DAEMON_VERSION = '1.2.20.beta3';
-const DAEMON_BUILD_ID = 'release-1.2.20.beta3-session-sync-shared-windows-target';
+const DAEMON_VERSION = '1.2.21.beta1';
+const DAEMON_BUILD_ID = 'release-1.2.21.beta1-session-sync-shared-windows-target';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
