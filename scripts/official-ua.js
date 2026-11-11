@@ -121,12 +121,65 @@ function detectFromPackage(options = {}) {
   return null;
 }
 
+/**
+ * 探测包内 Agent CLI 版本。
+ *
+ * 为什么要它：官方 node 客户端发往上游的 UA 是
+ *   `WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.165.0`
+ * 后段来自 app 包内自带的 @genie/agent-cli 版本（实测在
+ * `<app>/Contents/Resources/app.asar.unpacked/cli/package.json`）。
+ * 只写死前段会随客户端升级立刻过期，所以两段都从安装包里读。
+ */
+function detectCliVersion(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== 'darwin') return '';
+  const appPaths = options.appPaths
+    || ['/Applications/WorkBuddy.app', '/Applications/WorkBuddyAI.app', '/Applications/WorkDaddy.app'];
+  const readFile = options.readFile || ((file) => fs.readFileSync(file, 'utf8'));
+  for (const app of appPaths) {
+    try {
+      const raw = readFile(path.join(app, 'Contents', 'Resources', 'app.asar.unpacked', 'cli', 'package.json'));
+      const version = String((JSON.parse(raw) || {}).version || '').trim();
+      if (/^\d+(?:\.\d+){1,3}$/.test(version)) return version;
+    } catch (_) { /* 换下一个候选包 */ }
+  }
+  return '';
+}
+
+/**
+ * 拼官方 node 客户端形态的 UA。
+ * 缺版本就返回空串：宁可退到上一级取值，也不要拼一个 `WorkBuddy/undefined` 出去。
+ */
+function nodeUa(appVersion, cliVersion) {
+  const app = String(appVersion || '').trim();
+  if (!/^\d+(?:\.\d+){1,3}$/.test(app)) return '';
+  const cli = String(cliVersion || '').trim();
+  const head = `WorkBuddy/${app} WorkBuddy/${app}`;
+  const ua = /^\d+(?:\.\d+){1,3}$/.test(cli) ? `${head} CLI/${cli}` : head;
+  return saneNodeUa(ua);
+}
+
+/** node 客户端 UA 不是浏览器形态，不能用 saneUa（它只放行 Mozilla/AppleWebKit）。 */
+function saneNodeUa(value) {
+  const ua = String(value || '').trim();
+  if (ua.length < 16 || ua.length > 200) return '';
+  if (/[\r\n\t]/.test(ua)) return '';
+  if (!/^WorkBuddy\/\d/.test(ua)) return '';
+  return ua;
+}
+
 function readUaCache(file = UA_CACHE_FILE) {
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     const ua = saneUa(raw && raw.ua);
     if (!ua) return null;
-    return { ua, source: String(raw.source || 'cache'), appVersion: String(raw.appVersion || ''), at: raw.at || '' };
+    return {
+      ua,
+      source: String(raw.source || 'cache'),
+      appVersion: String(raw.appVersion || ''),
+      cliVersion: String(raw.cliVersion || ''),
+      at: raw.at || '',
+    };
   } catch (_) {
     return null;
   }
@@ -139,6 +192,7 @@ function writeUaCache(entry, file = UA_CACHE_FILE) {
       ua: entry.ua,
       source: entry.source,
       appVersion: entry.appVersion || '',
+      cliVersion: entry.cliVersion || '',
       at: new Date().toISOString(),
     };
     fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`);
@@ -169,19 +223,38 @@ function createOfficialUa(options = {}) {
   let lastLoggedSource = '';
 
   async function probe() {
+    const detectCli = options.detectCli || ((opts) => detectCliVersion(opts));
+    const cliOpts = { platform: options.platform, appPaths: options.appPaths, readFile: options.readFile };
+    let cliVersion = '';
+    try {
+      cliVersion = detectCli(cliOpts) || '';
+    } catch (_) { /* CLI 版本只是锦上添花，探测失败不影响主链路 */ }
+
     const fromCdp = await detectCdp({ port: options.port });
     if (fromCdp && fromCdp.ua) {
-      writeCache({ ua: fromCdp.ua, source: 'cdp', appVersion: fromCdp.appVersion }, cacheFile);
-      return { ua: fromCdp.ua, source: 'cdp', appVersion: fromCdp.appVersion };
+      const entry = { ua: fromCdp.ua, source: 'cdp', appVersion: fromCdp.appVersion, cliVersion };
+      writeCache(entry, cacheFile);
+      return { ...entry, nodeUa: nodeUa(fromCdp.appVersion, cliVersion) };
     }
     const fromPackage = detectPackage({ platform: options.platform });
     if (fromPackage && fromPackage.ua) {
-      writeCache({ ua: fromPackage.ua, source: 'package', appVersion: fromPackage.appVersion }, cacheFile);
-      return { ua: fromPackage.ua, source: 'package', appVersion: fromPackage.appVersion };
+      const entry = { ua: fromPackage.ua, source: 'package', appVersion: fromPackage.appVersion, cliVersion };
+      writeCache(entry, cacheFile);
+      return { ...entry, nodeUa: nodeUa(fromPackage.appVersion, cliVersion) };
     }
     const cached = readCache(cacheFile);
-    if (cached && cached.ua) return cached;
-    return { ua: BUILTIN_UA, source: 'builtin', appVersion: PRODUCT_TOKEN.exec(BUILTIN_UA)?.[1] || '' };
+    if (cached && cached.ua) {
+      const cli = cached.cliVersion || cliVersion;
+      return { ...cached, cliVersion: cli, nodeUa: nodeUa(cached.appVersion, cli) };
+    }
+    const builtinVersion = PRODUCT_TOKEN.exec(BUILTIN_UA)?.[1] || '';
+    return {
+      ua: BUILTIN_UA,
+      source: 'builtin',
+      appVersion: builtinVersion,
+      cliVersion,
+      nodeUa: nodeUa(builtinVersion, cliVersion),
+    };
   }
 
   async function resolve() {
@@ -210,12 +283,33 @@ function createOfficialUa(options = {}) {
     }
   }
 
+  /**
+   * 出站身份：UA + 客户端版本，供请求头构造使用（见 upstream-headers.js）。
+   * ua 优先用官方 node 客户端形态（`WorkBuddy/x WorkBuddy/x CLI/y`）：
+   * 那才是客户端真正发往上游的形态，浏览器 UA 只有 Electron 渲染进程才用。
+   * node 形态拼不出来时退回探测到的原始 ua，保证永远有值。
+   */
+  async function identity() {
+    const fallbackUa = await resolve();
+    const meta = memo || {};
+    const appVersion = String(meta.appVersion || '').trim();
+    const cliVersion = String(meta.cliVersion || '').trim();
+    const official = String(meta.nodeUa || '').trim() || nodeUa(appVersion, cliVersion);
+    return {
+      ua: official || fallbackUa,
+      appVersion,
+      cliVersion,
+      source: meta.source || 'builtin',
+      nodeShaped: !!official,
+    };
+  }
+
   function current() {
     if (!memo) return null;
     return { ...memo, ageMs: Date.now() - memoAt };
   }
 
-  return { resolve, current, warmup: () => resolve().catch(() => '') };
+  return { resolve, identity, current, warmup: () => resolve().catch(() => '') };
 }
 
 module.exports = {
@@ -223,6 +317,9 @@ module.exports = {
   UA_CACHE_FILE,
   DEFAULT_CDP_PORT,
   saneUa,
+  saneNodeUa,
+  nodeUa,
+  detectCliVersion,
   detectFromCdp,
   detectFromPackage,
   readUaCache,

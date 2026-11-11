@@ -10,10 +10,11 @@
  *  1. 端口固定，不参与 UI 端口回退（UI 端口会在 47832/17832/27832/37832 之间漂移）。
  *  2. 全局串行：同一时刻只允许一个上游请求在跑。官方只设计过串行切号，
  *     并发多账号是最容易被识别的异常模式，这里主动放弃并发度换安全。
- *  3. 身份只由 Bearer token 决定，本模块不发送任何设备指纹/用户 ID 头。
- *     唯一的例外是 User-Agent：不设的话 undici 会发 `node`，等于自报「我是脚本」。
- *     这里改成这台机器上真实装着的官方客户端 UA（见 official-ua.js），
- *     只去掉最廉价的机器指纹，不伪造设备侧任何凭据。
+ *  3. 出站请求头按「官方客户端形态」构造（见 upstream-headers.js）：X-Ide-* / X-Product /
+ *     X-Domain / X-Agent-* / UA 这一组身份头补齐，会话 id 与 trace 只透传、不伪造。
+ *     其中 X-User-Id 必须等于本次实际用号的 uid —— 「token 是 B 的、用户头却写 A」
+ *     比不带这个头更可疑。仍不发送任何设备级凭据，也绝不把入站的
+ *     authorization / x-api-key（本机代理凭据）转发到上游。
  *  4. 日志只记 uid 前 8 位，不落 token、不落 prompt 内容。
  */
 
@@ -22,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
 const { createOfficialUa } = require(path.join(__dirname, 'official-ua.js'));
+const { buildUpstreamHeaders } = require(path.join(__dirname, 'upstream-headers.js'));
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 47900;
@@ -512,6 +514,11 @@ function createCreditProxy(deps) {
   const uaResolver = upstreamUa && typeof upstreamUa.resolve === 'function'
     ? {
       resolve: () => upstreamUa.resolve(),
+      // 注入实现通常只给 resolve：identity 退化成「UA + 无版本信息」，
+      // 出站头里就只缺 X-Ide-Version，不会断掉转发。
+      identity: typeof upstreamUa.identity === 'function'
+        ? () => upstreamUa.identity()
+        : async () => ({ ua: await upstreamUa.resolve(), appVersion: '', cliVersion: '' }),
       current: typeof upstreamUa.current === 'function' ? () => upstreamUa.current() : () => null,
       warmup: typeof upstreamUa.warmup === 'function' ? () => upstreamUa.warmup() : () => {},
     }
@@ -540,6 +547,8 @@ function createCreditProxy(deps) {
     // 最近一次请求实际用了哪个号、与客户端当前登录的号是否一致。
     // 看板据此把「登的是谁、用的是谁」摆到明面上，不再让错配悄悄发生。
     lastRequest: null,
+    // 上一次出站请求带了哪些头（只记名字）。/healthz 用它回答「身份头生效了吗」。
+    lastHeaderKeys: null,
     // 最近到达的请求（只记录元信息，不含 prompt 与 token 明文），
     // 用于区分「客户端没连上」和「连上了但被 401/404 拦」。
     recent: [],
@@ -621,8 +630,11 @@ function createCreditProxy(deps) {
   /**
    * 真正向上游发起请求。返回 { ok, status, response } 或 { ok:false, status, message }。
    * 注意：这里不读 body，交给调用方决定是流式透传还是聚合。
+   *
+   * ctx.inbound 是客户端原始请求头：会话 id / trace / SDK 指纹这类真上下文由它透传，
+   * 身份头与 X-User-Id 则由 buildUpstreamHeaders 按「本次实际用号」重写。
    */
-  async function callUpstream(payload, uid, attempt = 0) {
+  async function callUpstream(payload, uid, ctx = null, attempt = 0) {
     const token = await resolveToken(uid);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -636,17 +648,21 @@ function createCreditProxy(deps) {
         stream: true,
       });
       dumpDebug('outgoing', outgoing);
-      // 上游不校验 UA（实测），但 undici 默认会发 `node`。这里换成官方客户端 UA，
-      // 拿不到时由 official-ua 的缓存/常量兜底，所以正常情况下 ua 一定有值。
-      const upstreamUaValue = await uaResolver.resolve();
+      // 出站头：UA/身份头用官方客户端形态，会话与 trace 只透传不伪造。
+      // 入站 x-api-key 是本机代理凭据，绝不外发；上游那个位置由 Authorization 承担。
+      const identity = await uaResolver.identity();
+      const headers = buildUpstreamHeaders({
+        inbound: ctx && ctx.inbound,
+        uid,
+        token,
+        client: identity,
+        upstreamOrigin,
+      });
+      // 只记头名不记值：让看板/healthz 能核对「到底带了哪些头」，又不落 token。
+      stats.lastHeaderKeys = Object.keys(headers).sort();
       const response = await fetch(`${upstreamOrigin}${UPSTREAM_PATH}`, {
         method: 'POST',
-        headers: {
-          accept: 'text/event-stream',
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-          ...(upstreamUaValue ? { 'user-agent': upstreamUaValue } : {}),
-        },
+        headers,
         body: JSON.stringify(outgoing),
         signal: controller.signal,
       });
@@ -673,7 +689,7 @@ function createCreditProxy(deps) {
         log(`[credit-proxy] 账号 ${shortUid(uid)} 网络失败（${error.message || 'fetch failed'}），${delay}ms 后重试`);
         clearTimeout(timer);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        return callUpstream(payload, uid, attempt + 1);
+        return callUpstream(payload, uid, ctx, attempt + 1);
       }
       return {
         ok: false,
@@ -687,7 +703,7 @@ function createCreditProxy(deps) {
   }
 
   /** 依次尝试候选账号，返回第一个成功的上游响应。 */
-  async function callWithRotation(payload, onAttempt) {
+  async function callWithRotation(payload, onAttempt, ctx = null) {
     const list = candidates();
     if (list.length === 0) {
       const message = restrictedUids.size > 0 ? '候选账号均被上游限制' : '没有可用账号（账号列表为空）';
@@ -698,7 +714,7 @@ function createCreditProxy(deps) {
       const account = list[index];
       if (index > 0) stats.rotations += 1;
       if (typeof onAttempt === 'function') onAttempt(account, index);
-      const result = await callUpstream(payload, account.uid);
+      const result = await callUpstream(payload, account.uid, ctx);
       if (result.ok) return result;
       last = result;
       // 账号被上游限制：先把号停掉，再试下一个；别让这个号继续被请求。
@@ -846,9 +862,11 @@ function createCreditProxy(deps) {
 
     const wantsStream = payload.stream === true;
     const startedAt = nowMs();
+    // 入站头只用于透传「本次调用链的真实上下文」，身份类头在 callUpstream 里按实际用号重写。
+    const ctx = { inbound: req.headers };
     const result = await enqueue(() => callWithRotation(payload, (account, index) => {
       if (index > 0) log(`[credit-proxy] 换号重试 → ${shortUid(account.uid)}`);
-    }));
+    }, ctx));
     // 成败都记：失败时也要能看出「这次本来想用谁的号」。
     noteLastRequest(result.uid);
 
@@ -998,6 +1016,9 @@ function createCreditProxy(deps) {
       // 这一发实际带出去的 UA 与它的来源（cdp / package / cache / builtin）。
       // 看板据此显示「UA 生效了吗」，避免以为改了却还在发 node。
       upstreamUa: uaResolver.current(),
+      // 上次出站实际带了哪些头（只有名字，没有值）。核对「身份头补齐了吗」用它，
+      // 不用再翻 dump 或抓包。
+      upstreamHeaderKeys: stats.lastHeaderKeys || [],
       recent: stats.recent.slice(-12),
       candidates: list.map((row) => ({
         uid: shortUid(row.uid),

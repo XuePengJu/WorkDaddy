@@ -88,6 +88,13 @@
   }
   .acctbar .ua .state { white-space: nowrap; font-size: 11px; color: var(--ok); }
   .acctbar .ua .state.warn { color: var(--warn); }
+  /* 出站头：接在 UA 同一行尾部，复用同一套 label/state 语言，不额外占高度。 */
+  .acctbar .ua .hdr {
+    display: flex; align-items: center; gap: 6px; flex: none;
+    padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--border);
+  }
+  .acctbar .ua .hdr code { flex: none; white-space: nowrap; }
+  .acctbar .ua .hdr .state.warn { color: var(--warn); }
 
   .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
   @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -222,6 +229,11 @@
       <span class="label">上游 UA</span>
       <code id="ua-value">—</code>
       <span class="state" id="ua-source"></span>
+      <span class="hdr">
+        <span class="label">出站头</span>
+        <code id="hdr-count">—</code>
+        <span class="state" id="hdr-state"></span>
+      </span>
     </div>
   </div>
 
@@ -384,11 +396,43 @@
       source.className = 'state';
       return;
     }
-    value.textContent = info.ua;
-    value.title = info.ua;
+    // 显示「实际发出去的那个」：nodeUa 才是官方 node 客户端的形态。
+    // 浏览器 UA（CDP 自报的那份）只进 title 备查，避免看板与实际出站值对不上。
+    var official = String(info.nodeUa || '');
+    value.textContent = official || info.ua;
+    value.title = official ? (official + '\n客户端自报：' + info.ua) : info.ua;
     var meta = UA_SOURCES[info.source] || { text: info.source || '未知来源', warn: true };
-    source.textContent = meta.text;
-    source.className = 'state' + (meta.warn ? ' warn' : '');
+    if (official) {
+      source.textContent = meta.text;
+      source.className = 'state' + (meta.warn ? ' warn' : '');
+    } else {
+      // 没探测到 CLI 版本就拼不出官方形态，等于还用一个客户端不会发的 UA。
+      source.textContent = '缺 CLI 版本';
+      source.className = 'state warn';
+    }
+  }
+
+  // 出站请求头：回答「身份头到底补齐了吗」。数据来自 /healthz 的 upstreamHeaderKeys
+  // （只有头名、没有值），所以这里可以安全地把整份名单挂在 title 上。
+  // 缺任何一条必需身份头都标黄——那说明这一发在上游眼里又变回「不像官方客户端」了。
+  var REQUIRED_HEADERS = ['x-ide-name', 'x-ide-version', 'x-product', 'x-agent-intent', 'x-user-id'];
+  function renderHeaders(d) {
+    var keys = (d && Array.isArray(d.upstreamHeaderKeys)) ? d.upstreamHeaderKeys : [];
+    var count = pick('hdr-count');
+    var state = pick('hdr-state');
+    if (!count || !state) return;
+    if (!keys.length) {
+      count.textContent = '—';
+      count.title = '';
+      state.textContent = '还没有请求';
+      state.className = 'state';
+      return;
+    }
+    var missing = REQUIRED_HEADERS.filter(function (name) { return keys.indexOf(name) < 0; });
+    count.textContent = keys.length + ' 个';
+    count.title = keys.join('\n');
+    state.textContent = missing.length ? '缺 ' + missing.join('、') : '身份头齐全';
+    state.className = 'state' + (missing.length ? ' warn' : '');
   }
 
   function setOrder(mode) {
@@ -761,6 +805,7 @@
       });
       renderAccount(res[3] || {});
       renderUa(res[3] || {});
+      renderHeaders(res[3] || {});
       renderSummary(res[0] || {});
       renderRecent((res[1] && res[1].items) || []);
       markUpdated();
