@@ -433,7 +433,7 @@ test('Windows launcher keeps local port probing and profile CDP candidates defin
   assert.match(launcher, /profilePorts\.includes\(savedPort\)/);
   assert.match(launcher, /for \(const port of profilePorts\) add\(port\)/);
   assert.match(launcher, /function daemonRunning\(\)\s*\{\s*return portOpen\(UI_PORT\);/);
-  assert.match(launcher, /'workbuddy-cn': \[9222/);
+  assert.match(launcher, /'workbuddy-cn': \[9226, 9222/);
   assert.match(launcher, /'workbuddy-ai': \[9223/);
   assert.match(launcher, /isTargetForProfile\(target, PROFILE\)/);
 });
@@ -495,7 +495,7 @@ test('Windows launcher rejects a persisted sibling-profile CDP port', { skip: pr
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     const ports = JSON.parse(result.stdout);
-    assert.deepEqual(ports, [9222, 9226, 9227, 9228, 9229, 9230, 9231, 9232]);
+    assert.deepEqual(ports, [9226, 9222, 9227, 9228, 9229, 9230, 9231, 9232]);
     assert.equal(ports.includes(9223), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -634,7 +634,11 @@ test('release scripts synchronize daemon version and build id', () => {
   assert.match(mac, /const DAEMON_BUILD_ID = 'release-/);
   assert.match(mac, /产物 daemon\.js 的版本或 Build ID/);
   assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleShortVersionString \$\{VERSION\}/);
-  assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleVersion \$\{VERSION\}/);
+  // 苹果要求 CFBundleVersion 逐段为整数，带 beta 段的发布号必须先数字化（1.2.20.beta1 -> 1.2.20.1），
+  // 所以这里写的是 BUNDLE_VERSION；同时要求脚本确实保留了数字化逻辑与 ${VERSION} 兜底。
+  assert.match(mac, /PlistBuddy[^\n]+Set :CFBundleVersion \$\{BUNDLE_VERSION\}/);
+  assert.match(mac, /BUNDLE_VERSION="\$VERSION"/);
+  assert.match(mac, /BUNDLE_VERSION="\$\{BASH_REMATCH\[1\]\}\.\$\{BASH_REMATCH\[3\]\}"/);
   assert.doesNotMatch(mac, /VERSION_CODE/);
 });
 
@@ -1325,8 +1329,8 @@ test('sensitive local API routes require an injected token and do not expose wil
 
 test('DevTools proxy uses the same persisted CDP port fallback as its URL endpoint', () => {
   const daemon = read('daemon.js');
-  assert.match(daemon, /const upstreamPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
-  assert.match(daemon, /devtoolsPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9222/);
+  assert.match(daemon, /const upstreamPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9226/);
+  assert.match(daemon, /devtoolsPort = cdp\.port \|\| readCdpPortFile\(\) \|\| CDP_PORT_HINT \|\| 9226/);
   assert.match(daemon, /\^\[A-Za-z0-9_\-\]\{1,128\}\$/);
 });
 
@@ -1477,7 +1481,7 @@ test('session auto-copy plans preserve physical source rows while list APIs dedu
   assert.match(lib, /const allLineages = \{\}/);
   assert.match(daemon, /rows\.filter\(/);
   assert.match(daemon, /dedupeAutoCopySessionRows\(rows, lineagesByUid, branchesByUid\)/);
-  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+  assert.match(daemon, /const DAEMON_VERSION = '\d+\.\d+\.\d+(?:\.beta\d+)?'/);
 });
 
 test('session pane restores and renders persistent auto-copy progress', () => {

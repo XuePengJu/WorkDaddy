@@ -1176,7 +1176,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var n;
     if ((n = document.querySelector('.wbs-root'))) n.remove();
     if ((n = document.getElementById('wbs-window-logo'))) n.remove();
-    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, #wbs-qp-insert-tooltip, .wbs-fork-button');
+    var st = document.querySelectorAll('.wbs-stash-inline, .wbs-stash-btn, .wbs-explore-inline, .wbs-explore-pop, #wbs-qp-insert-tooltip, .wbs-fork-button, .wbs-throughput');
     for (var i = 0; i < st.length; i++) st[i].remove();
     var nav = document.querySelectorAll('.wbs-message-nav-root');
     for (var ni = 0; ni < nav.length; ni++) nav[ni].remove();
@@ -1870,6 +1870,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     'DOM 元素检查器': 'DOM element inspector', '复制元素': 'Copy element', '关闭元素检查器': 'Close element inspector', '已复制元素': 'Element copied', '未找到可检查元素': 'No inspectable element found', '检查失败：': 'Inspection failed: ', '拾取模式：移动鼠标高亮元素，点击选中（Esc 退出）': 'Pick mode: move to highlight an element, click to select (Esc to exit)',
     '到期时间': 'Expiry', '剩余': 'Remaining', '剩余时间计算中': 'Calculating remaining time', '积分': 'Credits', '积分节点': 'Credit node', '积分查询超时': 'Credit query timed out', '个人版': 'Personal', '企业': 'Enterprise', '基础用量': 'Base usage', '赠送与加量包': 'Gift & bonus packs', '其他积分': 'Other credits', '即将过期': 'Expiring soon', '已过期': 'Expired',
     '积分未查询': 'Credits not queried', '上次查询：': 'Last checked: ', '刷新积分': 'Refresh credits', '刷新失败': 'Refresh failed',
+    '网关': 'Gateway', '浏览器打开': 'Open in browser', '网关运行中': 'Gateway running', '网关未启动': 'Gateway not running', '网关已终止': 'Gateway stopped', '网关检测中': 'Checking gateway', '网关状态未知': 'Gateway status unknown', '正在连接网关…': 'Connecting to gateway…',
+    '网关已终止，点上方「启动」重新开启': 'Gateway stopped. Use Start above to resume.', '网关未启动，点上方「启动」开启': 'Gateway is not running. Use Start above.', '网关状态未知，可点上方「刷新」重试': 'Gateway status unknown. Use Refresh above to retry.',
     '账号切换': 'Account switch', '切换账号': 'Switch account', '读取账号中…': 'Loading accounts…', '暂无已备份账号': 'No backed-up accounts yet',
     '正在切换到': 'Switching to', '切换失败：': 'Switch failed: ', '读取失败：': 'Load failed: ', '24小时过期：': 'Expires in 24h: ', '近7天过期：': 'Expires in 7 days: ', '积分：无限': 'Credits: unlimited',
     '昨天': 'Yesterday', '分钟': ' min', '小时': ' h', '定位到第': 'Jump to message ', '条用户消息': ' user message', '发送中': 'Sending', '附件': 'Attachment', '疑似未完成': 'Possibly incomplete',
@@ -2180,6 +2182,48 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '客户端未在运行，无需重启': 'Client is not running; no relaunch needed',
     // —— 第十六批：自动化「新建任务」指定工作区（daemon 侧校验/报错文案） ——
     '工作区': 'Workspace', '(无)': '(none)',
+    // —— 第十七批：回复输出速度角标（tok/s）与本地网关状态按钮 ——
+    // 说明：本批包含大量整句 key。翻译器按 key 长度降序、最长优先匹配，
+    // 只有整句进字典才能压住 '生成'/'输出'/'网关' 这类短词键，避免中英混合。
+    '回复输出速度': 'Reply output speed',
+    '在每条回复底部显示 Tokens/秒': 'Show Tokens/second under every reply',
+    '在每条回复底部显示输出速度（tok/s）。只统计真正吐字的时间，工具执行停顿不计入': 'Show output speed (tok/s) under every reply. Only the time actually spent emitting tokens is counted; pauses for tool execution are excluded.',
+    '均速': 'avg ',
+    '纯生成': 'pure generation ',
+    '工具等待': 'tool wait ',
+    '总耗时': 'total ',
+    '事后按会话记录回算': 'computed afterwards from the session record',
+    '解码': 'decoding ',
+    '首字': 'first token ',
+    '生成': 'generation ',
+    '不到 1s': 'under 1s',
+    '生成过程未被观测，无速度数据': 'Generation was not observed; no speed data',
+    '停顿中，显示上一次速度': 'Paused; showing the last measured speed',
+    // 本地网关状态：此前长期漏翻，长句被短词撕成「网关Running」这类混合文案
+    '网关检测中': 'Gateway checking',
+    '网关运行中': 'Gateway running',
+    '网关已终止': 'Gateway stopped',
+    '网关未启动': 'Gateway not started',
+    '网关已启动': 'Gateway started',
+    '网关状态未知': 'Gateway status unknown',
+    '网关未能终止，请重启客户端后重试': 'The gateway could not be stopped. Restart the client and try again.',
+    '停止本地网关，自定义模型会立刻不可用': 'Stop the local gateway; custom models become unavailable immediately',
+    '启动本地网关（47900），恢复自定义模型': 'Start the local gateway (47900) to restore custom models',
+    '终止': 'Stop',
+    '启动': 'Start',
+    // —— 第十八批：速度角标新增的接口实测 / 加权 / 吐字合计文案 ——
+    // 「接口实测」后直接跟数字，因此译文保留尾随空格与源码拼接方式对齐。
+    '接口实测': 'API measured ',
+    'tok/s（逐请求平均）': 'tok/s (per-request avg)',
+    '生成合计': 'generation total ',
+    '加权': 'weighted ',
+    '吐字合计': 'emission total ',
+    '逐请求': 'per request ',
+    '口径 = 输出 ÷（总耗时 − 首字）': 'definition = output ÷ (total − first token)',
+    // 同批补齐：单段耗时明细、网关看板 iframe 标题、浏览器无法打开时的兜底提示
+    '本次请求已吐字': 'this request emitted ',
+    '网关看板': 'Gateway dashboard',
+    '无法打开浏览器，请手动访问': 'Could not open a browser. Open it manually: ',
   };
   function wbsSystemLanguage() {
     var value = String((navigator && (navigator.language || navigator.userLanguage)) || '').toLowerCase();
@@ -3448,6 +3492,611 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       conversationUsage.spacer = null;
       conversationUsage.controller = null;
     });
+    /* ———— 输出速度（throughput）：在每条回复底部显示 Tokens/秒 ————
+     * 数据来源是官方 messageStore 里的 assistant 消息：usage.outputTokens 为精确值
+     * （官方每步都写，流式过程中递增），内容块文本长度用来判断「是否正在吐字」。
+     * 官方自己算过 tokensPerSecond 但只写进 evlog 事件日志，没有接到界面上，这里补一个角标。
+     * 口径：一次模型请求 = 一段（segment）。分母只用「这一段第一包到最后一包」的累计间隔，
+     * 所以 prefill、排队、工具执行、思考停顿都不进分母；分子只算同一段里真正观测到的 token。
+     * 起点不可知的那一批 token（首包、跨段、间隔过大、速率物理上不可能、字数估算切到官方
+     * usage 的第一批）连同对应时间一起丢弃——旧实现只丢时间不丢 token，实测把真实
+     * 155 tok/s 放大成 708 tok/s。
+     * 历史消息（本次运行没观测到生成过程）只显示 token 数，不臆造速度。 */
+    var THROUGHPUT_ENABLED_KEY = 'workdaddy.session.throughputEnabled';
+    var throughputEnabled = true;
+    try { throughputEnabled = localStorage.getItem(THROUGHPUT_ENABLED_KEY) !== '0'; } catch (_) {}
+    // 两次内容增长的间隔超过该值，视为「上一次请求已经结束、新的一次请求开始了」，前后不拼成一段
+    var THROUGHPUT_STEP_GAP_MS = 1200;
+    // 单批 token 的物理上限（tok/s）。超过它说明这一批是攒着一起到的（流被批量合并），
+    // 起点时刻不可知，必须整批丢弃，否则就是几百 token ÷ 几十毫秒
+    var THROUGHPUT_MAX_BURST_TPS = 4000;
+    // 一段（一次请求）至少跑这么久才算得出速度（太短只有一两个 chunk，没有统计意义）
+    var THROUGHPUT_MIN_SEG_MS = 300;
+    // 实时显示的门槛：段跨度不足这么久时只显示 token 数。
+    // 本地观测拿不到 chunk 级时间戳，短段误差大（实测 <1s 的段能算成 300+），
+    // 所以放宽到 800ms，宁可晚一点出数，也不刷一个不可信的数字。
+    var THROUGHPUT_MIN_LIVE_MS = 800;
+    var THROUGHPUT_BOLT_SVG = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M7 0 2 7h3.1L4 12l6-7H6.9L7 0Z"/></svg>';
+    var throughput = {
+      enabled: throughputEnabled,
+      controller: null,
+      unsubscribe: null,
+      records: Object.create(null),
+      syncTimer: null,
+      // 历史回填：官方把 usage 从历史消息里剥掉了，token 数与生成耗时只能从会话 JSONL 拿。
+      // 一次只缓存当前会话，切走即清空，避免 requestId 张冠李戴。
+      // magpie：同一会话在接口侧的真实速度（接口自己测的 ms/ttft_ms/out），有就优先用。
+      history: { conversationId: '', requests: null, magpie: null, loadingId: '', loadedAt: 0 },
+    };
+    function writeThroughputEnabled(enabled) {
+      throughputEnabled = !!enabled;
+      throughput.enabled = throughputEnabled;
+      try { localStorage.setItem(THROUGHPUT_ENABLED_KEY, throughputEnabled ? '1' : '0'); } catch (_) {}
+    }
+    function throughputIsAssistant(message) {
+      var role = String((message && (message.messageType || message.role)) || '').toLowerCase();
+      return role.indexOf('assistant') >= 0;
+    }
+    function throughputTokens(message) {
+      var usage = message && message.usage;
+      var value = usage && Number(usage.outputTokens);
+      return isFinite(value) && value > 0 ? value : 0;
+    }
+    // 正文与思考过程都算输出：outputTokens 本身含推理 token，只统计正文会让比值失真。
+    function throughputChars(message) {
+      var content = message && message.content;
+      if (!Array.isArray(content)) return 0;
+      var total = 0;
+      for (var i = 0; i < content.length; i++) {
+        var block = content[i];
+        if (block && typeof block.text === 'string') total += block.text.length;
+      }
+      return total;
+    }
+    function throughputFormatTokens(value) {
+      var number = Math.round(Number(value) || 0);
+      if (number >= 100000) return Math.round(number / 1000) + 'K';
+      if (number >= 10000) return (number / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+      return String(number).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+    function throughputFormatDuration(ms) {
+      var seconds = Math.max(0, Number(ms) || 0) / 1000;
+      if (seconds < 1) return '不到 1s';
+      if (seconds < 60) return (seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds))) + 's';
+      var minutes = Math.floor(seconds / 60);
+      var rest = Math.round(seconds % 60);
+      return minutes + 'm' + (rest ? rest + 's' : '');
+    }
+    // 速度只用官方 usage 的精确 token，不再用「字数 × 比值」估算。
+    // 实测这个客户端的 usage 不是流式下发的，只在每步结束时一次性补报：
+    // 估算只能给出量级，实测能差 2 倍（估算 315 而真实 155），宁可不显示也不虚报。
+    /** 单段（= 一次模型请求）的速度：分子只认精确 token，分母是本段首包到末包。 */
+    function throughputSegRate(seg) {
+      if (!seg || seg.ms < THROUGHPUT_MIN_SEG_MS || seg.tokens <= 0) return null;
+      return seg.tokens / seg.ms * 1000;
+    }
+    /** 逐请求速度列表：每段各算一个，供「均速」与 tooltip 明细共用。 */
+    function throughputSegRates(rec) {
+      var out = [];
+      var segments = (rec && rec.segments) || [];
+      for (var i = 0; i < segments.length; i++) {
+        var rate = throughputSegRate(segments[i]);
+        if (rate !== null) out.push(rate);
+      }
+      return out;
+    }
+    /** 近期速度：只看当前这一段，且必须已经有精确 usage 才算得出来。
+     *  还在等 usage 时返回 null，由角标冻结上一步的精确值，不做任何估算。 */
+    function throughputLiveRate(rec) {
+      var seg = rec && rec.seg;
+      if (!seg || seg.ms < THROUGHPUT_MIN_LIVE_MS || seg.tokens <= 0) return null;
+      return seg.tokens / seg.ms * 1000;
+    }
+    /** 完成后的速度：逐请求分别算再取平均（每条请求长短差很多，不加权更贴近单次感受）。 */
+    function throughputFinalRate(rec) {
+      if (!rec) return null;
+      // 接口实测值即最终答案
+      if (rec.fromApi && rec.apiTps > 0) return rec.apiTps;
+      // 历史回填只有整轮数字（含每步启动开销），沿用旧口径，靠「均速」措辞区分
+      if (rec.fromHistory) {
+        if (rec.activeMs < THROUGHPUT_MIN_SEG_MS || rec.tokens <= 0) return null;
+        return rec.tokens / rec.activeMs * 1000;
+      }
+      var rates = throughputSegRates(rec);
+      if (!rates.length) return null;
+      var sum = 0;
+      for (var i = 0; i < rates.length; i++) sum += rates[i];
+      return sum / rates.length;
+    }
+    /**
+     * 从会话 JSONL 换回来的历史用量里取这一条回复的数字。
+     * 只对「已经写完、但官方没给 usage」的消息生效——实时观测到的消息自带精确值，不需要回填。
+     */
+    function throughputHistoryRecord(message) {
+      if (!message || !throughput.enabled) return null;
+      var requests = throughput.history.requests;
+      if (!requests || !throughput.history.conversationId) return null;
+      if (String(message.conversationId || '') !== throughput.history.conversationId) return null;
+      var requestId = String(message.requestId || (message.extra && message.extra.conversationRequestId) || '');
+      if (!requestId) return null;
+      var item = requests[requestId];
+      if (!item || !(Number(item.output) > 0)) return null;
+      return {
+        tokens: Number(item.output) || 0,
+        modelMs: Number(item.modelMs) || 0,
+        spanMs: Number(item.spanMs) || 0,
+        toolMs: Number(item.toolMs) || 0,
+        firstAt: Number(item.firstAt) || 0,
+        endAt: Number(item.end) || 0,
+        steps: Number(item.steps) || 0,
+      };
+    }
+    /**
+     * 接口侧真实速度（magpie usage.jsonl，daemon 已按轮配对）：有就直接用。
+     * 口径 out ÷ (ms − ttft_ms)，分子分母都是接口自己测的，与接口看板同源。
+     */
+    function throughputApiRecord(message) {
+      if (!message || !throughput.enabled) return null;
+      var magpie = throughput.history.magpie;
+      if (!magpie || !throughput.history.conversationId) return null;
+      if (String(message.conversationId || '') !== throughput.history.conversationId) return null;
+      var requestId = String(message.requestId || (message.extra && message.extra.conversationRequestId) || '');
+      if (!requestId) return null;
+      var item = magpie[requestId];
+      if (!item || !(Number(item.tps) > 0) || !(Number(item.tokens) > 0)) return null;
+      return {
+        tokens: Number(item.tokens) || 0,
+        tps: Number(item.tps) || 0,
+        rates: Array.isArray(item.rates) ? item.rates : [],
+        genMs: Number(item.genMs) || 0,
+        requests: Number(item.requests) || 0,
+        weighTps: item.genMs > 0 ? Number(item.tokens) / (Number(item.genMs) / 1000) : 0,
+      };
+    }
+    function loadThroughputHistory(conversationId, force) {
+      var id = String(conversationId || '');
+      if (!id || throughput.history.loadingId === id) return;
+      // 同一会话刚拉过就别再打接口（force 用于「请求刚落盘」时的补拉）
+      if (!force && throughput.history.conversationId === id
+          && Date.now() - throughput.history.loadedAt < 8000) return;
+      throughput.history.loadingId = id;
+      api('/api/conversation-tokens?conversationId=' + encodeURIComponent(id))
+        .then(function (payload) {
+          if (throughput.history.loadingId !== id) return;
+          throughput.history.loadingId = '';
+          if (!payload || !payload.requests) return;
+          throughput.history.conversationId = id;
+          throughput.history.requests = payload.requests;
+          throughput.history.magpie = payload.magpie || null;
+          throughput.history.loadedAt = Date.now();
+          // 这一轮补拉后仍没有接口值的记录，记一次「空手而归」，避免不走 magpie 的
+          // 消息让补拉无限循环（3 次拿不到就认定这个会话拿不到接口值）。
+          var known = Object.keys(throughput.records);
+          for (var i = 0; i < known.length; i++) {
+            var item = throughput.records[known[i]];
+            if (item && item.done && !item.fromApi) item.apiMiss = (item.apiMiss || 0) + 1;
+          }
+          // 回填后立刻刷一次，不用等下一拍兜底 tick
+          if (alive) scheduleThroughputBadges();
+        })
+        .catch(function () {
+          if (throughput.history.loadingId === id) throughput.history.loadingId = '';
+        });
+    }
+    function syncThroughputHistory(surface) {
+      var id = String((surface && surface.id) || '');
+      if (!id) return;
+      if (throughput.history.conversationId === id || throughput.history.loadingId === id) return;
+      // 换会话先清空，避免上一个会话的 requestId 命中新消息
+      throughput.history.conversationId = '';
+      throughput.history.requests = null;
+      throughput.history.magpie = null;
+      throughput.history.loadedAt = 0;
+      loadThroughputHistory(id);
+    }
+    /** 有已完成但还没拿到接口值的回复时，隔几秒补拉一次（接口行要请求结束才落盘）。 */
+    function throughputNeedsApiRefresh() {
+      if (!throughput.enabled) return false;
+      if (!throughput.history.conversationId) return false;
+      if (Date.now() - throughput.history.loadedAt < 4000) return false;
+      var ids = Object.keys(throughput.records);
+      for (var i = 0; i < ids.length; i++) {
+        var rec = throughput.records[ids[i]];
+        // apiMiss>=3：这个会话在接口侧没有对应行（例如没走 magpie 的模型），别再补拉
+        if (rec && rec.done && !rec.fromApi && (rec.apiMiss || 0) < 3) return true;
+      }
+      return false;
+    }
+    /** 观察一次 store 快照：累计解码时长、首次吐字时间、完成状态。 */
+    function throughputObserve(state) {
+      if (!throughput.enabled || !state || !Array.isArray(state.messages)) return;
+      var now = Date.now();
+      var messages = state.messages;
+      // 正在生成的那条由实时观测独占，不能拿历史数字去盖（否则会把中途值冻住）
+      var streamingId = String(state.streamingMessageId || '');
+      for (var i = 0; i < messages.length; i++) {
+        var message = messages[i];
+        if (!throughputIsAssistant(message)) continue;
+        var id = String(message.id || '');
+        if (!id) continue;
+        var rec = throughput.records[id];
+        // 完成后仍要看一眼：官方可能先置 complete 再补 usage（实测有整轮 usage 迟到）
+        var tokens = throughputTokens(message);
+        var chars = throughputChars(message);
+        if (!rec) {
+          if (!tokens && !chars) continue;
+          // 历史消息：官方已明确 complete 且没有 usage，用会话 JSONL 的真实数字回填，
+          // 否则这条回复将永远没有角标（重启后所有回复都是这个状态）。
+          var apiItem = !tokens && String(message.id) !== streamingId ? throughputApiRecord(message) : null;
+          var historyItem = !apiItem && !tokens && String(message.id) !== streamingId ? throughputHistoryRecord(message) : null;
+          rec = throughput.records[id] = (apiItem || historyItem) ? {
+            id: id,
+            tokens: (apiItem || historyItem).tokens,
+            chars: chars,
+            activeMs: apiItem ? apiItem.genMs : historyItem.modelMs,
+            firstChangeAt: apiItem ? 0 : historyItem.firstAt,
+            lastChangeAt: 0,
+            createTime: Number(message.createTime) || 0,
+            done: true,
+            doneAt: apiItem ? 0 : historyItem.endAt,
+            segments: [],
+            seg: null,
+            // 接口值、JSONL 回算都属「事后来源」，与实时观测不同源，措辞要区分
+            fromHistory: !apiItem,
+            fromApi: !!apiItem,
+            apiTps: apiItem ? apiItem.tps : 0,
+            apiRates: apiItem ? apiItem.rates : null,
+            apiGenMs: apiItem ? apiItem.genMs : 0,
+            apiRequests: apiItem ? apiItem.requests : 0,
+            missedStart: true,
+            lastRate: 0,
+            toolMs: apiItem ? 0 : historyItem.toolMs,
+            spanMs: apiItem ? 0 : historyItem.spanMs,
+          } : {
+            id: id,
+            tokens: 0,
+            chars: 0,
+            activeMs: 0,
+            firstChangeAt: 0,
+            lastChangeAt: 0,
+            createTime: Number(message.createTime) || 0,
+            done: false,
+            doneAt: 0,
+            segments: [],
+            seg: null,
+            fromHistory: false,
+            fromApi: false,
+            apiTps: 0,
+            apiRates: null,
+            apiGenMs: 0,
+            apiRequests: 0,
+            // 首次看到它时正文已经有内容，说明这条的生成过程我们从中间才开始看，
+            // 首字时间无法还原（实测会出现「首字 24m42s」这种胡说）
+            missedStart: chars > 0,
+            lastRate: 0,
+          };
+        }
+        // 接口侧的数是最终答案：实时观测完成的记录，等 magpie 那一行落盘后覆盖掉本地估算。
+        // （接口行要请求结束才写，所以完成那一刻通常还没有，靠下面的节流重拉补上）
+        if (rec && !rec.fromApi && rec.done) {
+          var lateApi = throughputApiRecord(message);
+          if (lateApi) {
+            rec.fromApi = true;
+            rec.tokens = lateApi.tokens || rec.tokens;
+            rec.apiTps = lateApi.tps;
+            rec.apiRates = lateApi.rates;
+            rec.apiGenMs = lateApi.genMs;
+            rec.apiRequests = lateApi.requests;
+            rec.seg = null;
+          }
+        }
+        // 回填是异步到的：先前已按「无 usage」建过记录，这里补升一次，
+        // 否则第一次渲染时 JSONL 还没回来，角标会一直是空的。接口值优先于 JSONL 回算。
+        if (rec && !rec.fromApi && !rec.tokens && rec.chars > 0 && String(message.id) !== streamingId) {
+          var lateApi2 = throughputApiRecord(message);
+          var lateHistory = lateApi2 ? null : throughputHistoryRecord(message);
+          if (lateApi2) {
+            rec.fromApi = true;
+            rec.fromHistory = false;
+            rec.tokens = lateApi2.tokens;
+            rec.apiTps = lateApi2.tps;
+            rec.apiRates = lateApi2.rates;
+            rec.apiGenMs = lateApi2.genMs;
+            rec.apiRequests = lateApi2.requests;
+            rec.done = true;
+            rec.segments.length = 0;
+            rec.seg = null;
+          } else if (lateHistory) {
+            rec.fromHistory = true;
+            rec.tokens = lateHistory.tokens;
+            rec.chars = chars;
+            rec.activeMs = lateHistory.modelMs;
+            rec.firstChangeAt = lateHistory.firstAt || rec.firstChangeAt;
+            rec.done = true;
+            rec.doneAt = lateHistory.endAt || rec.doneAt;
+            rec.toolMs = lateHistory.toolMs;
+            rec.spanMs = lateHistory.spanMs;
+            rec.segments.length = 0;
+            rec.seg = null;
+          }
+        }
+        // 回填出来的记录不再参与实时累计：它的时长口径是「事后按步回算」，与实时观测不同源
+        if (!rec.fromHistory && (tokens > rec.tokens || chars > rec.chars)) {
+          var deltaTokens = Math.max(0, tokens - rec.tokens);
+          var deltaChars = Math.max(0, chars - rec.chars);
+          var gap = rec.lastChangeAt ? now - rec.lastChangeAt : 0;
+          // 只涨 token、不涨正文 = 官方在补报「刚结束那一段」的用量（实测 usage 不是流式
+          // 下发的，每步结束才给一次）。这一批是该段的结算，归给上一段，它的时间窗口已经量好。
+          var settled = !rec.done && deltaTokens > 0 && deltaChars === 0;
+          if (settled) {
+            var target = rec.seg || (rec.segments.length ? rec.segments[rec.segments.length - 1] : null);
+            if (target && target.tokens === 0 && target.ms >= THROUGHPUT_MIN_SEG_MS) {
+              target.tokens = deltaTokens;
+              // 结算过就把这段封口：下一步的内容增长必须另起一段，不能再往这段里加 token
+              target.closed = true;
+            }
+          }
+          // 起始时刻不可知的情况，时间与 token 都不进任何一段，直接开新段：
+          //   · 首包：还看不出这一段从哪一刻开始吐
+          //   · 间隔 > STEP_GAP：中间在跑工具、排队或思考停顿
+          //   · 速率物理上不可能：流被批量合并后一起送达
+          // 旧实现只把时间丢掉、token 留着，于是几百 token ÷ 几十毫秒 = 708 tok/s。
+          var untimed = !settled && ((rec.seg && rec.seg.closed) || !rec.lastChangeAt || gap <= 0 ||
+            gap > THROUGHPUT_STEP_GAP_MS ||
+            deltaTokens > (gap / 1000) * THROUGHPUT_MAX_BURST_TPS + 8);
+          if (!rec.done) {
+            if (untimed) {
+              // 开新的一段（= 新的一次模型请求），首批 token 不计入分子
+              rec.seg = { firstAt: now, lastAt: now, tokens: 0, chars: 0, ms: 0 };
+              rec.segments.push(rec.seg);
+            } else if (!settled) {
+              if (!rec.seg) {
+                rec.seg = { firstAt: rec.lastChangeAt || now, lastAt: rec.lastChangeAt || now, tokens: 0, chars: 0, ms: 0 };
+                rec.segments.push(rec.seg);
+              }
+              rec.seg.tokens += deltaTokens;
+              rec.seg.chars += deltaChars;
+              rec.seg.ms += gap;
+              rec.seg.lastAt = now;
+            }
+          }
+          if (!rec.firstChangeAt) {
+            rec.firstChangeAt = now;
+            if (!rec.createTime) rec.createTime = Number(message.createTime) || 0;
+          }
+          rec.lastChangeAt = now;
+          rec.tokens = Math.max(rec.tokens, tokens);
+          rec.chars = Math.max(rec.chars, chars);
+        }
+        if (message.complete === true || message.isEnd === true) {
+          // 完成时间只记第一次：每拍都刷会把 doneAt 往前推，等于把「生成耗时」算成实时钟
+          if (!rec.done) rec.doneAt = now;
+          rec.done = true;
+          rec.seg = null;
+        }
+      }
+    }
+    function throughputBadgeText(rec) {
+      if (!rec) return '';
+      if (!rec.done) {
+        var live = throughputLiveRate(rec);
+        if (live !== null) {
+          // 记住最后一次算得出的速度：工具执行/长时间停顿会让当前段作废，
+          // 那段时间直接消失会让角标看起来像坏了，改为冻结在一个暗色数字上。
+          rec.lastRate = live;
+          return Math.round(live) + ' tok/s';
+        }
+        if (rec.lastRate > 0) return Math.round(rec.lastRate) + ' tok/s';
+        return rec.tokens > 0 ? throughputFormatTokens(rec.tokens) + ' tok' : '';
+      }
+      var rate = throughputFinalRate(rec);
+      if (rate !== null) {
+        // 接口实测值不做任何修饰：它就是你看板看到的那个数
+        if (rec.fromApi && rec.apiTps > 0) return Math.round(rec.apiTps) + ' tok/s';
+        // JSONL 回算的是「整轮平均」（含每步启动开销），与实时吐字速度不同源，标注「均速」
+        return rec.fromHistory ? '均速 ' + Math.round(rate) + ' tok/s' : Math.round(rate) + ' tok/s';
+      }
+      if (rec.fromApi && rec.apiTps > 0) return Math.round(rec.apiTps) + ' tok/s';
+      return rec.tokens > 0 ? throughputFormatTokens(rec.tokens) + ' tok' : '';
+    }
+    function throughputBadgeTitle(rec) {
+      if (!rec) return '';
+      // 接口实测：口径最硬，直接说明来源，避免和 JSONL 的「均速」混为一谈
+      if (rec.fromApi) {
+        var api = ['输出 ' + throughputFormatTokens(rec.tokens) + ' tok'];
+        api.push('接口实测 ' + Math.round(rec.apiTps) + ' tok/s（逐请求平均）');
+        if (rec.apiRates && rec.apiRates.length) {
+          var list = [];
+          for (var a = 0; a < rec.apiRates.length && a < 6; a++) list.push(rec.apiRates[a]);
+          api.push(rec.apiRates.length > 6 ? list.join('/') + '… 共 ' + rec.apiRates.length + ' 次' : list.join('/') + ' tok/s');
+        }
+        if (rec.apiGenMs > 0) api.push('生成合计 ' + throughputFormatDuration(rec.apiGenMs));
+        if (rec.apiGenMs > 0 && rec.tokens > 0) {
+          api.push('加权 ' + Math.round(rec.tokens / (rec.apiGenMs / 1000)) + ' tok/s');
+        }
+        api.push('口径 = 输出 ÷（总耗时 − 首字）');
+        return api.join(' · ');
+      }
+      // JSONL 回算：整轮口径（含每步启动开销），措辞标「均速」与接口值区分
+      if (rec.fromHistory) {
+        var hist = ['输出 ' + throughputFormatTokens(rec.tokens) + ' tok'];
+        var histRate = throughputFinalRate(rec);
+        if (histRate !== null) hist.push('均速 ' + Math.round(histRate) + ' tok/s');
+        if (rec.activeMs > 0) hist.push('纯生成 ' + throughputFormatDuration(rec.activeMs));
+        if (rec.toolMs > 0) hist.push('工具等待 ' + throughputFormatDuration(rec.toolMs));
+        if (rec.spanMs > 0) hist.push('总耗时 ' + throughputFormatDuration(rec.spanMs));
+        hist.push('事后按会话记录回算');
+        return hist.join(' · ');
+      }
+      var parts = [];
+      if (rec.tokens > 0) parts.push('输出 ' + throughputFormatTokens(rec.tokens) + ' tok');
+      // 速度口径：逐请求（一次模型请求 = 一段），只算首包到末包，工具/等待/首字全不计
+      var rates = throughputSegRates(rec);
+      var seg = rec.seg;
+      var timedMs = 0;
+      var segs = rec.segments || [];
+      for (var i = 0; i < segs.length; i++) timedMs += segs[i].ms;
+      if (rec.done) {
+        if (rates.length) {
+          var shown = [];
+          for (var j = 0; j < rates.length && j < 4; j++) shown.push(Math.round(rates[j]) + ' tok/s');
+          parts.push((rates.length > 4 ? '逐请求 ' + rates.length + ' 次 · ' : '逐请求 ') + shown.join(' / '));
+          if (timedMs > 0) parts.push('吐字合计 ' + throughputFormatDuration(timedMs));
+        } else if (rec.tokens > 0) {
+          parts.push('生成过程未被观测，无速度数据');
+        }
+      } else if (seg && seg.ms >= THROUGHPUT_MIN_LIVE_MS && seg.tokens > 0) {
+        parts.push('本次请求已吐字 ' + throughputFormatDuration(seg.ms));
+      } else if (rec.lastRate > 0) {
+        parts.push('停顿中，显示上一次速度');
+      }
+      // missedStart：我们从中间才开始看，首字时间无法还原，宁可不说
+      if (!rec.missedStart && rec.firstChangeAt && rec.createTime && rec.firstChangeAt > rec.createTime) {
+        parts.push('首字 ' + throughputFormatDuration(rec.firstChangeAt - rec.createTime));
+      }
+      if (rec.done && rec.doneAt && rec.firstChangeAt && rec.doneAt > rec.firstChangeAt) {
+        parts.push('生成 ' + throughputFormatDuration(rec.doneAt - rec.firstChangeAt));
+      }
+      return parts.join(' · ');
+    }
+    function throughputAnchor(node) {
+      var footer = node.querySelector('.conversation-finished-footer, .conversation-streaming-footer');
+      if (footer) {
+        // 完成态 footer 里有一行官方按钮（复制/点赞…），角标挂这行末尾；WorkDaddy 的分支按钮也在这一行
+        var feedback = footer.querySelector('[class*="assistantFeedback"]');
+        if (feedback) return feedback;
+        return footer;
+      }
+      return node.querySelector('.cr-agent__body') || node;
+    }
+    function renderThroughputBadge(node, rec) {
+      var existing = node.querySelector('.wbs-throughput');
+      // 消息块之间不会嵌套，但保险起见确认角标属于当前这条
+      if (existing && existing.closest('.cr-agent') !== node) existing = null;
+      var text = throughputBadgeText(rec);
+      if (!text) {
+        if (existing) existing.remove();
+        return;
+      }
+      var title = throughputBadgeTitle(rec);
+      var host = throughputAnchor(node);
+      var badge = existing;
+      if (!badge) {
+        badge = el('div', 'wbs-throughput');
+        badge.setAttribute('data-wbs-throughput', '1');
+        badge.innerHTML = THROUGHPUT_BOLT_SVG + '<span class="wbs-throughput-text"></span>';
+      }
+      if (badge.parentNode !== host) host.appendChild(badge);
+      // 实时只在「此刻确实在吐字」时点亮；停顿、回填、无速度数据一律暗显
+      var badgeLive = !rec.done && throughputLiveRate(rec) !== null;
+      badge.classList.toggle('is-live', badgeLive);
+      badge.classList.toggle('is-static', rec.done ? throughputFinalRate(rec) === null : !badgeLive);
+      var textNode = badge.querySelector('.wbs-throughput-text');
+      if (textNode && textNode.textContent !== text) textNode.textContent = text;
+      if (badge.getAttribute('title') !== title) badge.setAttribute('title', title);
+    }
+    function removeThroughputBadges() {
+      var nodes = document.querySelectorAll('.wbs-throughput');
+      for (var i = 0; i < nodes.length; i++) nodes[i].remove();
+    }
+    function syncThroughputBadges() {
+      if (!throughput.enabled) { removeThroughputBadges(); return; }
+      var nodes = document.querySelectorAll('.cr-agent[data-message-id]');
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        var id = String(node.getAttribute('data-message-id') || '');
+        if (!id) continue;
+        var rec = throughput.records[id];
+        if (!rec) {
+          var stale = node.querySelector('.wbs-throughput');
+          if (stale) stale.remove();
+          continue;
+        }
+        renderThroughputBadge(node, rec);
+      }
+    }
+    function scheduleThroughputBadges() {
+      if (!throughput.enabled || throughput.syncTimer) return;
+      throughput.syncTimer = setBuildTimeout(function () {
+        throughput.syncTimer = null;
+        if (!alive) return;
+        // 历史用量也在这条路线上拉：只靠 1s 兜底 tick 的话，窗口失焦被节流时
+        // 历史角标会长时间不出现，而 DOM 变更/流式更新是更可靠的触发点。
+        var surface = usageSurface();
+        if (surface) syncThroughputHistory(surface);
+        // 回复刚结束时接口那一行可能还没落盘，节流补拉一次把本地值换成接口实测值
+        if (surface && throughputNeedsApiRefresh()) loadThroughputHistory(String(surface.id || ''), true);
+        syncThroughputBadges();
+      }, 150);
+    }
+    function bindThroughputController(controller) {
+      if (throughput.controller === controller) {
+        if (controller && controller.messageStore) {
+          try { throughputObserve(controller.messageStore.getState()); } catch (_) {}
+        }
+        return;
+      }
+      if (throughput.unsubscribe) {
+        try { throughput.unsubscribe(); } catch (_) {}
+        throughput.unsubscribe = null;
+      }
+      throughput.controller = controller || null;
+      if (!controller || !controller.messageStore) return;
+      var store = controller.messageStore;
+      var scheduled = false;
+      function refresh(state) {
+        if (throughput.controller !== controller) return;
+        if (scheduled) return;
+        scheduled = true;
+        var raf = window.requestAnimationFrame || function (cb) { return window.setTimeout(cb, 16); };
+        raf(function () {
+          scheduled = false;
+          if (throughput.controller !== controller) return;
+          var s = state;
+          if (!s || !Array.isArray(s.messages)) {
+            try { s = store.getState(); } catch (_) { s = null; }
+          }
+          throughputObserve(s);
+          scheduleThroughputBadges();
+        });
+      }
+      try { throughput.unsubscribe = store.subscribe(refresh); } catch (_) { throughput.unsubscribe = null; }
+      try { refresh(store.getState()); } catch (_) {}
+    }
+    function syncThroughput() {
+      if (!alive) return;
+      if (!throughput.enabled) {
+        removeThroughputBadges();
+        bindThroughputController(null);
+        return;
+      }
+      var surface = usageSurface();
+      if (!surface) {
+        removeThroughputBadges();
+        bindThroughputController(null);
+        return;
+      }
+      syncThroughputHistory(surface);
+      bindThroughputController(usageController(surface.id));
+      syncThroughputBadges();
+    }
+    function setThroughputEnabled(enabled) {
+      writeThroughputEnabled(enabled);
+      syncThroughput();
+      if (!throughputEnabled) removeThroughputBadges();
+    }
+    registerDisposer(function () {
+      if (throughput.unsubscribe) { try { throughput.unsubscribe(); } catch (_) {} }
+      throughput.unsubscribe = null;
+      throughput.controller = null;
+      removeThroughputBadges();
+    });
+    setBuildInterval(function () {
+      // 兜底重扫：注入时聊天区可能还没就绪、切换会话后 controller 会换人、
+      // 官方收尾时 store 也不再发更新，都靠这一拍重新绑定并刷新角标。
+      if (!throughput.enabled) return;
+      syncThroughput();
+    }, 1000);
     var toastRuntime = window.__wbsToastRuntime;
     if (!toastRuntime) throw new Error('通知组件未加载');
     registerDisposer(function () { toastRuntime.destroy(); });
@@ -3823,6 +4472,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<button class="wbs-tab" type="button" data-tab="theme"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10c0-1.5-1-2-2-2h-3a2 2 0 0 1-2-2c0-1.5 1-2 1-2h2c0-3-2-4-6-4z"/><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/></svg><span>主题</span></button>',
       '<button class="wbs-tab" type="button" data-tab="sessions"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>会话</span></button>',
       '<button class="wbs-tab" type="button" data-tab="models"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>模型</span></button>',
+      '<button class="wbs-tab" type="button" data-tab="gateway"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13m0 0-3-3m3 3-3 3"/><path d="M20 17H7m0 0 3-3m-3 3 3 3"/></svg><span>网关</span></button>',
       '<button class="wbs-tab" type="button" data-tab="enhance"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>增强</span></button>',
       '<button class="wbs-tab" type="button" data-tab="automations">' + AUTO_TAB_SVG + '<span>自动化</span></button>',
       '<button class="wbs-tab" type="button" data-tab="pc"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>电脑</span></button>',
@@ -3833,6 +4483,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       '<div class="wbs-pane" data-pane="theme"></div>',
       '<div class="wbs-pane" data-pane="sessions"></div>',
       '<div class="wbs-pane" data-pane="models"></div>',
+      '<div class="wbs-pane" data-pane="gateway"></div>',
       '<div class="wbs-pane" data-pane="enhance"></div>',
       '<div class="wbs-pane" data-pane="automations"></div>',
       '<div class="wbs-pane" data-pane="pc"></div>',
@@ -4100,6 +4751,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       stash: true,
       messageNav: readMessageNavigationEnabled(),
       usageSummary: conversationUsageEnabled,
+      throughput: throughputEnabled,
       fork: readForkEnabled(),
       phrase: true,
       themeTakeover: CAPS.themeTakeover !== false,
@@ -5574,6 +6226,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       guardSessionChange();
       if (messageNavigation) messageNavigation.sync();
       scheduleForkButtons();
+      scheduleThroughputBadges();
       scheduleFabPos();
       if (typeof syncGlassComposerTriggerBackgrounds === 'function') syncGlassComposerTriggerBackgrounds();
       watchRow();
@@ -5656,6 +6309,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     syncGlassComposerTriggerBackgrounds();
     syncStash(); // 初始检查
     scheduleForkButtons();
+    setBuildTimeout(syncThroughput, 400);
     setBuildTimeout(wrapQueueReorder, 800);
 
     // ===== 悬浮按钮位置：拖动时可在窗口内移动，释放后水平吸附右边 =====
@@ -5796,9 +6450,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!fab) return;
       ensureFabAnchorObserver();
       var area = WBS_COMPAT.findConversationArea(document);
-      // 只有「会话区已挂载、却被整块遮住」（全屏文件/产物预览）才隐藏机器人。
-      // 1.2.21 把「没有会话区」也算成遮挡，于是首页（.wb-home-page）、设置、登录页
-      // 一律不显示机器人，必须切进任务才出现；更新前是常显的（issue #524）。
+      // #524 / 1.2.21 回归：只有「会话区已挂载、却被整块遮住」（全屏文件/产物预览）
+      // 才隐藏机器人；没有会话区的页面（首页 .wb-home-page、新建任务、设置、登录页）
+      // 一律常显。5.11.3 工作台壳的会话区由 workbuddy-compat.js 的
+      // .layout-window-frame__body 分支提供，浮窗按新壳定位而不是窗口边距。
       var areaHidden = !isWelcomePage() && !!(area && !area.rect);
       var changed = fab.classList.contains('is-area-hidden') !== areaHidden;
       fab.classList.toggle('is-area-hidden', areaHidden);
@@ -6849,6 +7504,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     var automationPane = root.querySelector('[data-pane="automations"]');
     var pcPane = root.querySelector('[data-pane="pc"]');
     var aboutPane = root.querySelector('[data-pane="about"]');
+    var gatewayPane = root.querySelector('[data-pane="gateway"]');
     var hiddenToolsUnlocked = false;
     var logoutBtn = root.querySelector('[data-act="logout"]');
     var statusPopover = null;
@@ -8891,6 +9547,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       else if (name === 'automations' && automationPane && automationPane.__wbsRefreshDiscovery) automationPane.__wbsRefreshDiscovery();
       if (name === 'pc' && pcPane && !pcPane.dataset.built) buildPcPane();
       if (name === 'about' && aboutPane && !aboutPane.dataset.built) buildAboutPane();
+      if (name === 'gateway' && gatewayPane) {
+        if (!gatewayPane.dataset.built) buildGatewayPane();
+        else refreshGatewayFrame();
+      }
       if (name === 'settings' && settingsPane && !settingsPane.dataset.built) buildSettingsPane();
     }
     var tabBtns = root.querySelectorAll('.wbs-tab');
@@ -10712,6 +11372,126 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         updateModelCounts();
       });
     }
+    // 本地网关（47900）状态。自定义模型全部依赖它，状态与启停都只在「网关」页呈现，
+    // 模型页保持原样、不掺网关相关信息。
+    var gatewayState = { listening: false, disabled: false, busy: false };
+
+    // ===== 网关 pane：一级入口，内嵌本地网关（47900）看板 =====
+    // 看板由网关自己 serve，所以这里只做容器与状态灯；启停走 daemon 的 /api/credit-proxy/*。
+    var GATEWAY_ORIGIN = 'http://127.0.0.1:47900';
+
+    function gatewayFrameUrl() { return GATEWAY_ORIGIN + '/dashboard?embed=1&_=' + Date.now(); }
+
+    function gatewayPaneMessage(message) {
+      var wrap = gatewayPane && gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      if (wrap) wrap.innerHTML = '<div class="wbs-empty">' + esc(message) + '</div>';
+    }
+
+    /** 与模型页工具栏里的状态灯保持同一份状态；pane 未构建时静默跳过。 */
+    function renderGatewayPaneChrome() {
+      if (!gatewayPane || !gatewayPane.dataset.built) return;
+      var box = gatewayPane.querySelector('#wbs-gw-pane-state');
+      var text = gatewayPane.querySelector('#wbs-gw-pane-text');
+      var btn = gatewayPane.querySelector('#wbs-gw-pane-toggle');
+      if (!box || !text || !btn) return;
+      box.classList.toggle('on', !gatewayState.busy && gatewayState.listening);
+      box.classList.toggle('off', !gatewayState.busy && !gatewayState.listening);
+      box.classList.toggle('busy', !!gatewayState.busy);
+      if (gatewayState.busy) text.textContent = '处理中…';
+      else if (gatewayState.listening) text.textContent = '网关运行中';
+      else text.textContent = gatewayState.disabled ? '网关已终止' : '网关未启动';
+      btn.style.display = '';
+      btn.disabled = !!gatewayState.busy;
+      btn.textContent = gatewayState.listening ? '终止' : '启动';
+    }
+
+    /** iframe 高度对齐面板可用高度：面板固定 650px，避免小屏时溢出或留白。 */
+    function syncGatewayFrameHeight() {
+      if (!gatewayPane) return;
+      var wrap = gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      var body = root.querySelector('.wbs-body');
+      if (!wrap || !body) return;
+      var available = body.clientHeight - (gatewayPane.querySelector('.wbs-gw-bar') ? gatewayPane.querySelector('.wbs-gw-bar').offsetHeight : 0) - 20;
+      if (available > 120) wrap.style.height = available + 'px';
+    }
+
+    /** 依据 gatewayState 决定 pane 内显示 iframe 还是空状态；已存在则只重载，避免重建丢滚动位置。 */
+    function refreshGatewayFrame() {
+      if (!gatewayPane || !gatewayPane.dataset.built) return;
+      var wrap = gatewayPane.querySelector('#wbs-gw-frame-wrap');
+      if (!wrap) return;
+      syncGatewayFrameHeight();
+      if (!gatewayState.listening) {
+        gatewayPaneMessage(gatewayState.disabled ? '网关已终止，点上方「启动」重新开启' : '网关未启动，点上方「启动」开启');
+        return;
+      }
+      var frame = wrap.querySelector('iframe');
+      if (frame) { frame.src = gatewayFrameUrl(); return; }
+      wrap.innerHTML = '<iframe class="wbs-gw-frame" src="' + gatewayFrameUrl() + '" title="网关看板" referrerpolicy="no-referrer"></iframe>';
+    }
+
+    function buildGatewayPane() {
+      if (!gatewayPane) return;
+      gatewayPane.dataset.built = '1';
+      gatewayPane.innerHTML =
+        '<div class="wbs-gw-pane">' +
+        '<div class="wbs-gw-bar">' +
+        '<span class="wbs-gw" id="wbs-gw-pane-state"><span class="wbs-gw-dot"></span><span id="wbs-gw-pane-text">网关检测中</span></span>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-toggle" style="display:none">启动</button>' +
+        '<span class="wbs-gw-bar-spacer"></span>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-reload">刷新</button>' +
+        '<button class="wbs-sess-bbtn" type="button" id="wbs-gw-pane-browser">浏览器打开</button>' +
+        '</div>' +
+        '<div class="wbs-gw-frame-wrap" id="wbs-gw-frame-wrap"><div class="wbs-empty">正在连接网关…</div></div>' +
+        '</div>';
+      var toggle = gatewayPane.querySelector('#wbs-gw-pane-toggle');
+      if (toggle) toggle.onclick = function () { toggleGateway(); };
+      var reload = gatewayPane.querySelector('#wbs-gw-pane-reload');
+      if (reload) reload.onclick = function () { loadGatewayStatus(); };
+      var browser = gatewayPane.querySelector('#wbs-gw-pane-browser');
+      if (browser) {
+        browser.onclick = function () {
+          try { window.open(GATEWAY_ORIGIN + '/dashboard', '_blank'); }
+          catch (_) { toast('无法打开浏览器，请手动访问 ' + GATEWAY_ORIGIN + '/dashboard', true, root); }
+        };
+      }
+      loadGatewayStatus();
+    }
+
+    function loadGatewayStatus() {
+      api('/api/credit-proxy/status').then(function (data) {
+        gatewayState.listening = !!data.listening;
+        gatewayState.disabled = !!data.disabled;
+        gatewayState.busy = false;
+        renderGatewayPaneChrome();
+        refreshGatewayFrame();
+      }).catch(function () {
+        gatewayState.busy = false;
+        renderGatewayPaneChrome();
+        gatewayPaneMessage('网关状态未知，可点上方「刷新」重试');
+      });
+    }
+
+    function toggleGateway() {
+      if (gatewayState.busy) return;
+      var stopping = gatewayState.listening;
+      gatewayState.busy = true;
+      renderGatewayPaneChrome();
+      api(stopping ? '/api/credit-proxy/stop' : '/api/credit-proxy/start', { method: 'POST' }).then(function (data) {
+        gatewayState.listening = !!data.listening;
+        gatewayState.disabled = !!data.disabled;
+        gatewayState.busy = false;
+        renderGatewayPaneChrome();
+        refreshGatewayFrame();
+        if (stopping && gatewayState.listening) toast('网关未能终止，请重启客户端后重试', true, root);
+        else toast(stopping ? '网关已终止' : '网关已启动', false, root);
+      }).catch(function (e) {
+        gatewayState.busy = false;
+        renderGatewayPaneChrome();
+        toast('操作失败：' + (e && e.message || e), true, root);
+      });
+    }
+
     function updateModelCounts() {
       if (!modelsPane) return;
       var officialCount = modelsPane.querySelector('#wbs-model-official-count');
@@ -11307,6 +12087,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         '<span class="wbs-nd-title">会话用量汇总</span>' +
         '<span class="wbs-nd-hint">在会话底部显示 Token、积分和模型汇总</span>' +
         '<label class="wbs-switch" title="在会话底部显示 Token、积分和模型汇总"><input type="checkbox" id="wbs-sess-usage-summary"><span class="wbs-switch-slider"></span></label>' +
+        '</div>' +
+        '<div class="wbs-nd-row">' +
+        '<span class="wbs-nd-title">回复输出速度</span>' +
+        '<span class="wbs-nd-hint">在每条回复底部显示 Tokens/秒</span>' +
+        '<label class="wbs-switch" title="在每条回复底部显示输出速度（tok/s）。只统计真正吐字的时间，工具执行停顿不计入"><input type="checkbox" id="wbs-sess-throughput"><span class="wbs-switch-slider"></span></label>' +
         '</div>' +
         '<div class="wbs-nd-row">' +
         '<span class="wbs-nd-title">分支到新会话</span>' +
@@ -15730,6 +16515,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           setConversationUsageEnabled(sessState.usageSummary);
         });
       }
+      var swT = pane2.querySelector('#wbs-sess-throughput');
+      if (swT) {
+        swT.checked = throughputEnabled;
+        swT.addEventListener('change', function () {
+          sessState.throughput = !!this.checked;
+          setThroughputEnabled(sessState.throughput);
+        });
+      }
       var swF = pane2.querySelector('#wbs-sess-fork');
       if (swF) {
         swF.checked = sessState.fork;
@@ -18371,6 +19164,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-fork-button:disabled{opacity:.45;cursor:default}',
     'html.cb-dark .wbs-fork-button,html[data-theme="dark"] .wbs-fork-button,body[data-vscode-theme-name*="dark" i] .wbs-fork-button{color:var(--wb-icon-secondary,rgba(255,255,255,.7))}',
     'html.cb-dark .wbs-fork-button:hover,html[data-theme="dark"] .wbs-fork-button:hover,body[data-vscode-theme-name*="dark" i] .wbs-fork-button:hover{color:var(--wb-color-text-primary,#f2f3f5);background:var(--wb-bg-hover,rgba(255,255,255,.1))}',
+    /* 回复输出速度角标：与官方 footer 按钮同一行高，数字等宽避免实时刷新时宽度抖动 */
+    '.wbs-throughput{display:inline-flex;flex:0 0 auto;align-items:center;gap:4px;height:24px;padding:0 7px;margin:0 0 0 2px;border:0;border-radius:8px;background:transparent;color:var(--wb-color-text-secondary,rgba(0,0,0,.6));font-size:11px;line-height:1;font-family:inherit;font-variant-numeric:tabular-nums;white-space:nowrap;cursor:default;user-select:none;-webkit-user-select:none;transition:background-color .15s ease,color .15s ease}',
+    '.wbs-throughput svg{flex:0 0 auto;width:11px;height:11px;opacity:.75}',
+    '.wbs-throughput:hover{background:var(--wb-bg-hover,rgba(0,0,0,.06))}',
+    '.wbs-throughput.is-live{color:var(--wb-accent-blue,#4f86ff)}',
+    '.wbs-throughput.is-live svg{opacity:1}',
+    '.wbs-throughput.is-static{opacity:.6}',
+    'html.cb-dark .wbs-throughput,html[data-theme="dark"] .wbs-throughput,body[data-vscode-theme-name*="dark" i] .wbs-throughput{color:var(--wb-color-text-secondary,rgba(255,255,255,.62))}',
+    'html.cb-dark .wbs-throughput:hover,html[data-theme="dark"] .wbs-throughput:hover,body[data-vscode-theme-name*="dark" i] .wbs-throughput:hover{background:var(--wb-bg-hover,rgba(255,255,255,.1))}',
+    'html.cb-dark .wbs-throughput.is-live,html[data-theme="dark"] .wbs-throughput.is-live,body[data-vscode-theme-name*="dark" i] .wbs-throughput.is-live{color:var(--wb-accent-blue,#7aa2ff)}',
     /* 会话消息索引：跟随官方消息视口定位，tooltip 使用主题感知的毛玻璃表面 */
     'html[data-wbs-message-nav] aside.conversation-history-navigation{display:none!important}',
     '.wbs-message-nav-root{position:fixed;width:24px;z-index:1000;pointer-events:none;user-select:none;-webkit-user-select:none;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--wb-color-text-primary,#1f1f1f)}',
@@ -18771,6 +19574,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-tab:hover{background:var(--wb-bg-hover,#f5f5f5);color:var(--wb-color-text-primary,#1f1f1f)}',
     '.wbs-tab.active{background:var(--wb-button-primary-bg,#1f1f1f);color:var(--wb-button-primary-fg,#fff);box-shadow:0 2px 10px color-mix(in srgb,var(--wb-button-primary-bg,#1f1f1f) 30%,transparent)}',
     '.wbs-pane{display:none;padding:2px 2px 6px}',
+      '.wbs-gw-pane{display:flex;flex-direction:column;gap:10px}',
+      '.wbs-gw-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.wbs-gw-bar-spacer{flex:1 1 auto}',
+      '.wbs-gw-frame-wrap{position:relative;height:380px;border-radius:10px;overflow:hidden;border:1px solid var(--wb-border-subtle,rgba(20,24,32,.12));background:var(--wb-bg-tertiary,#f5f6f8)}',
+      '.wbs-gw-frame{display:block;width:100%;height:100%;border:0;background:var(--wb-bg-primary,#fff)}',
     '.wbs-pane.active{display:flex;flex-direction:column;height:100%;min-height:0}',
     '.wbs-settings-card{padding:12px 14px}',
     '.wbs-settings-row{display:flex;align-items:center;gap:12px;justify-content:space-between}',
@@ -18895,6 +19703,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     '.wbs-model-tab-count{font-size:12px;opacity:.72;font-variant-numeric:tabular-nums}',
     '.wbs-model-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:7px}',
     '.wbs-model-toolbar-spacer{flex:1}',
+    '.wbs-gw{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--wb-color-text-secondary,#8a8f98);white-space:nowrap}',
+    '.wbs-gw-dot{width:7px;height:7px;border-radius:50%;background:#c2c6cc;flex:0 0 auto;transition:background .15s}',
+    '.wbs-gw.on .wbs-gw-dot{background:#22c55e}',
+    '.wbs-gw.off .wbs-gw-dot{background:#f59e0b}',
+    '.wbs-gw.busy .wbs-gw-dot{background:#3b82f6}',
     '.wbs-model-imports{display:flex;align-items:center;gap:5px;flex-wrap:wrap}',
     '.wbs-model-import:disabled{opacity:.5;cursor:not-allowed}',
     '.wbs-model-third-party,.wbs-model-client-import{position:relative;display:inline-flex}',

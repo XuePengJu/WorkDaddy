@@ -167,7 +167,7 @@ Linux でソースからインストールする場合は、適切な `WBSWITCH_
 git clone https://github.com/babygoton/WorkDaddy.git
 cd WorkDaddy
 bash scripts/install.sh           # Create the backup directory and start the daemon
-bash scripts/relaunch-with-cdp.sh  # Launch WorkBuddy with CDP on port 9222
+bash scripts/relaunch-with-cdp.sh  # Launch WorkBuddy with CDP on port 9226 (9222 is left free for your own Chrome)
 ```
 
 4 つのクライアントはすべて、同じデーモンのコードを共有しています。プロファイルは、最初に見つかった CDP のポートから推測するのではなく、デーモンを目的のクライアントに結び付けます：
@@ -207,7 +207,7 @@ macOS では、上の表の任意のプロファイルを `WORKDADDY_BUILD_PROFI
 **CDP インジェクション · 公式のインストールが変更されることはありません**
 
 ```text
-┌─────────────┐  --remote-debugging-port=9222  ┌──────────────┐
+┌─────────────┐  --remote-debugging-port=9226  ┌──────────────┐
 │  WorkBuddy  │ <───────────────────────────> │  WorkDaddy   │
 │  (Electron) │       Chrome DevTools         │  daemon.js   │
 │             │       Protocol (CDP)         │              │
@@ -217,9 +217,9 @@ macOS では、上の表の任意のプロファイルを `WORKDADDY_BUILD_PROFI
 └─────────────┘                              └──────────────┘
 ```
 
-この図は、中国本土版の WorkBuddy を例にしています。上に示したプロファイルの順に、ローカルの API のポートのデフォルトは `47832`、`47833`、`47834`、`47835` で、レンダラーの CDP のポートのデフォルトは `9222`、`9223`、`9224`、`9225` です。CodeBuddy では、ネイティブの認証とセッションの保存のために、ローカルのメインプロセスのデバッグ用のポート `9244` / `9245` も使います。
+この図は、中国本土版の WorkBuddy を例にしています。上に示したプロファイルの順に、ローカルの API のポートのデフォルトは `47832`、`47833`、`47834`、`47835` で、レンダラーの CDP のポートのデフォルトは `9226`、`9223`、`9224`、`9225` です（`9222` は中国本土版の候補プールに残るため、旧デフォルトで起動中のインスタンスもそのまま動きます）。CodeBuddy では、ネイティブの認証とセッションの保存のために、ローカルのメインプロセスのデバッグ用のポート `9244` / `9245` も使います。
 
-1. **変更されない WorkBuddy のバイナリ：** ランチャーは WorkBuddy を起動するときに `--remote-debugging-port=9222` を追加します。バイナリと署名はそのままです。
+1. **変更されない WorkBuddy のバイナリ：** ランチャーは WorkBuddy を起動するときに `--remote-debugging-port=9226` を追加します。バイナリと署名はそのままです。
 2. **CDP の接続：** デーモンはログインと認証のネットワークのイベントを監視し、フォールバックとしてファイルの監視も行います。ログインとトークンの更新のイベントでは、`account.uid` を使って、現在のアカウントを安定したローカルのディレクトリにバックアップします。
 3. **注入される UI：** `Runtime.evaluate` がレンダラーで `inject.js` を実行し、クライアントの機能に応じて、ロボットのボタンと、Accounts、Theme、Sessions、Models、Enhance、Automation、Computer、About、Settings の各ページを追加します。CodeBuddy では Enhance は非表示になります。
 4. **ローカルの HTTP API：** デーモンは `127.0.0.1:47832` で待ち受けます。パネルは、アカウントの切り替え、テーマ、チェックイン、権限の確認、スリープの制御などの機能にこれを使います。

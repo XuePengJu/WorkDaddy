@@ -78,12 +78,12 @@ let UI_PORT = REQUESTED_UI_PORT;
 process.env.WBSWITCH_PORT = String(UI_PORT);
 const UI_PORT_FILE = path.join(DATA_DIR, 'ui-port.json');
 const PROFILE_CDP_PORTS = {
-  'workbuddy-cn': [9222, 9226, 9227, 9228, 9229, 9230, 9231, 9232],
+  'workbuddy-cn': [9226, 9222, 9227, 9228, 9229, 9230, 9231, 9232],
   'workbuddy-ai': [9223, 9233, 9234, 9235, 9236, 9237, 9238, 9239],
   'codebuddy-cn': [9224],
   'codebuddy-intl': [9225],
 };
-const DEFAULT_CDP_PORT = Number(PROFILE.cdp && PROFILE.cdp.port) || (PROFILE_CDP_PORTS[PROFILE.id] || [9222])[0];
+const DEFAULT_CDP_PORT = Number(PROFILE.cdp && PROFILE.cdp.port) || (PROFILE_CDP_PORTS[PROFILE.id] || [9226])[0];
 const cliCdpPort = process.argv.find((arg) => /^--cdp-port=\d+$/i.test(arg));
 const HAS_EXPLICIT_CDP_PORT = Boolean(process.env.WBSWITCH_CDP_PORT || cliCdpPort);
 let CDP_PORT = parseInt(process.env.WBSWITCH_CDP_PORT || (cliCdpPort ? cliCdpPort.split('=')[1] : '') || String(DEFAULT_CDP_PORT), 10);

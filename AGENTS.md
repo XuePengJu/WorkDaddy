@@ -162,7 +162,7 @@ Use this exact flow for a Windows release. The two client packages are built fro
    - `scripts/runtime/node/node.exe` exists.
    - `scripts/daemon.js` reports the requested `<VERSION>`.
    - `scripts/win-launcher.js`, `scripts/watchdog.js`, and the required PowerShell scripts are present.
-   - CN uses `workbuddy-cn`, `47832`, `9222` as its defaults; AI uses `workbuddy-ai`, `47833`, `9223`.
+   - CN uses `workbuddy-cn`, `47832`, `9226` as its defaults; AI uses `workbuddy-ai`, `47833`, `9223`. The `9222` candidate stays in the CN fallback pool so a client already running on the old default keeps working.
    - The extracted `scripts/inject.js` keeps the platform placeholder unquoted (`var WBS_PLATFORM = __WBS_PLATFORM__;`) so daemon replacement with `JSON.stringify(process.platform)` produces the correct `"win32"` value. Confirm the Windows path contains the auto-open installer flow and does not enter the macOS reboot progress branch.
    - The package contains no `安装失败自主解决提示词.txt` and no temporary ZIP.
    - The ZIP root contains `WorkDaddy.portable`, `WorkDaddyLauncher.exe`, `Start-WorkDaddy.cmd`, and `Stop-WorkDaddy.cmd`, but no Install/Uninstall commands. The Setup payload contains no portable marker.

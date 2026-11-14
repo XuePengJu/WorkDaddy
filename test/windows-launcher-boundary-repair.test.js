@@ -380,7 +380,7 @@ test('Windows cold-start restarts the verified current-profile WorkBuddy and sen
 });
 
 test('Windows daemon repairs only missing cwd directories with stored session payloads', () => {
-  assert.match(daemonSource, /const DAEMON_VERSION = '\d+\.\d+\.\d+'/);
+  assert.match(daemonSource, /const DAEMON_VERSION = '\d+\.\d+\.\d+(?:\.beta\d+)?'/);
   assert.match(daemonSource, /function sessionPayloadExists\(wbHome, sessionId\)/);
   assert.match(daemonSource, /function createDirectoryNoFollow\(directory\)/);
   assert.match(daemonSource, /repairMissingSessionWorkspaces\(\)\.catch/);

@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网关用量 · WorkDaddy</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --faint: #9aa0a6;
+    --border: #e6e8eb;
+    --accent: #3b82f6;
+    --accent-soft: #eff6ff;
+    --bar: #dbeafe;
+    --ok: #16a34a;
+    --warn: #d97706;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b;
+      --card: #1d2025;
+      --text: #e6e8eb;
+      --muted: #9aa3ad;
+      --faint: #7b828b;
+      --border: #2b2f36;
+      --accent: #60a5fa;
+      --accent-soft: #1e2a3d;
+      --bar: #2a3b55;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 20px 56px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--faint); font-size: 12px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .topbar .sub { display: flex; align-items: center; gap: 8px; }
+  button.refresh {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 8px; padding: 5px 11px; font-size: 12px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s;
+  }
+  button.refresh:hover { color: var(--accent); border-color: var(--accent); }
+  button.refresh:active { opacity: .7; }
+
+  /* 登的是谁、用的是谁：错配必须显眼，所以放在首屏卡片上方。 */
+  .acctbar {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 14px; margin-bottom: 12px;
+  }
+  .acctbar .seg { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .acctbar .label { color: var(--muted); font-size: 12px; }
+  .acctbar strong { font-size: 14px; font-weight: 650; }
+  .acctbar .state { font-size: 11px; color: var(--ok); }
+  .acctbar .state.warn { color: var(--warn); }
+  .acctbar .order { display: flex; align-items: center; gap: 6px; }
+  button.mode {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 7px; padding: 4px 10px; font-size: 11px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  button.mode:hover { color: var(--accent); border-color: var(--accent); }
+  button.mode[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  /* 上游 UA 单独占一行：它是给上游看的，不该跟「用的是哪个号」抢同一行注意力。 */
+  .acctbar .ua {
+    flex-basis: 100%; display: flex; align-items: center; gap: 8px; min-width: 0;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .acctbar .ua code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--text); opacity: .72;
+    flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .acctbar .ua .state { white-space: nowrap; font-size: 11px; color: var(--ok); }
+  .acctbar .ua .state.warn { color: var(--warn); }
+  /* 出站头：接在 UA 同一行尾部，复用同一套 label/state 语言，不额外占高度。 */
+  .acctbar .ua .hdr {
+    display: flex; align-items: center; gap: 6px; flex: none;
+    padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--border);
+  }
+  .acctbar .ua .hdr code { flex: none; white-space: nowrap; }
+  .acctbar .ua .hdr .state.warn { color: var(--warn); }
+
+  .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+  @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; min-height: 84px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .card .value { font-size: 24px; font-weight: 650; letter-spacing: .3px; font-variant-numeric: tabular-nums; }
+  .card .hint { color: var(--faint); font-size: 11px; margin-top: 4px; min-height: 15px; }
+  .card.accent .value { color: var(--accent); }
+
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; font-weight: 650; margin: 0 0 14px; color: var(--text); display: flex; justify-content: space-between; align-items: baseline; }
+  section h2 .note { font-weight: 400; font-size: 11px; color: var(--faint); }
+
+  /* 折线图：输入走左轴、输出走右轴。两者量级差两个数量级，同轴会把输出压成贴底直线。 */
+  .chart { position: relative; height: 176px; }
+  .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .chart .grid line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 4; }
+  .chart .axis text { fill: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .chart .axis-l text { text-anchor: end; }
+  .chart .axis-r text { text-anchor: start; }
+  .chart .xlab { fill: var(--faint); font-size: 10px; text-anchor: middle; white-space: nowrap; }
+  .chart .xlab.today { fill: var(--accent); font-weight: 600; }
+  .chart .line-in { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .line-out { fill: none; stroke: var(--warn); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .area-in { fill: var(--accent); fill-opacity: .08; }
+  .chart .pt { fill: var(--card); stroke-width: 1.6; }
+  .chart .pt.in { stroke: var(--accent); }
+  .chart .pt.out { stroke: var(--warn); }
+  .chart .hit { fill: transparent; }
+  .chart .vline { stroke: var(--faint); stroke-opacity: .5; stroke-width: 1; stroke-dasharray: 3 3; }
+  .chart-tip {
+    position: absolute; z-index: 2; pointer-events: none; opacity: 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
+    padding: 6px 9px; font-size: 11px; line-height: 1.5; color: var(--text);
+    white-space: nowrap; transition: opacity .12s;
+  }
+  .chart-tip.show { opacity: 1; }
+  .chart-tip b { font-weight: 650; }
+  .chart-tip .r { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; margin-right: 6px; vertical-align: middle; }
+  .legend i.in { background: var(--accent); }
+  .legend i.out { background: var(--warn); }
+  .legend .ax { color: var(--faint); }
+
+  .models .row { display: grid; grid-template-columns: 150px 1fr 68px 78px; gap: 12px; align-items: center; padding: 7px 0; font-size: 12px; }
+  .models .row + .row { border-top: 1px solid var(--border); }
+  .models .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .models .track { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
+  .models .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .models .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { .models .row { grid-template-columns: 100px 1fr 60px; } .models .credit { display: none; } }
+
+  .mlist .grp { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--faint); padding: 10px 0 2px; }
+  .mlist .grp:first-child { padding-top: 0; }
+  .mlist .grp .note { font-size: 11px; color: var(--faint); }
+  /* 未配置那组默认收起：12 行「未配置」把已配置的模型挤到很下面。 */
+  .mlist .grp.toggle { cursor: pointer; user-select: none; }
+  .mlist .grp.toggle:hover { color: var(--muted); }
+  .mlist .grp.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .mlist .grp .caret {
+    align-self: center; flex: 0 0 auto; width: 0; height: 0;
+    border-left: 6px solid currentColor; border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent;
+    transition: transform .12s ease;
+  }
+  .mlist .grp.open .caret { transform: rotate(90deg); }
+  .mlist .grp .gcount { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .mlist .grp-body[hidden] { display: none; }
+  .mlist .mrow { display: grid; grid-template-columns: 12px minmax(110px, 180px) 1fr 54px 62px 66px; gap: 10px; align-items: center; padding: 7px 0; font-size: 12px; }
+  .mlist .mrow + .mrow { border-top: 1px solid var(--border); }
+  .mlist .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .mlist .dot.ok { background: var(--ok); }
+  .mlist .dot.bad { background: var(--warn); }
+  .mlist .mid { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mlist .mrow.pending .mid { font-weight: 400; color: var(--muted); }
+  .mlist .msub { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mlist .mnum { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mlist .mtest {
+    border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 7px; padding: 3px 0; font-size: 11px; cursor: pointer; font-family: inherit;
+    transition: color .15s, border-color .15s; text-align: center;
+  }
+  .mlist .mtest:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .mlist .mtest:disabled { opacity: .6; cursor: default; }
+  .mlist .mtest.ok { color: var(--ok); border-color: var(--ok); }
+  .mlist .mtest.bad { color: var(--warn); border-color: var(--warn); }
+  @media (max-width: 640px) {
+    .mlist .mrow { grid-template-columns: 12px 1fr 54px 66px; }
+    .mlist .msub, .mlist .mnum.credit { display: none; }
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--faint); font-weight: 500; font-size: 11px; padding: 0 8px 8px; white-space: nowrap; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 7px 8px; border-top: 1px solid var(--border); white-space: nowrap; }
+  td.model { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; }
+  .fail { color: var(--warn); }
+  .empty { color: var(--faint); font-size: 12px; padding: 14px 0; text-align: center; }
+  .scroller { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>网关用量</h1>
+      <div class="sub">只统计经本地网关（47900）转发的请求</div>
+    </div>
+    <div class="sub">
+      <span id="updated">—</span>
+      <button class="refresh" id="refresh" type="button">刷新</button>
+    </div>
+  </div>
+
+  <div class="acctbar">
+    <div class="seg">
+      <span class="label">本次请求账号</span>
+      <strong id="acct-used">—</strong>
+      <span class="state" id="acct-state"></span>
+    </div>
+    <div class="order">
+      <span class="label">选号顺序</span>
+      <button class="mode" id="order-current" type="button" aria-pressed="true">当前账号优先</button>
+      <button class="mode" id="order-expiring" type="button" aria-pressed="false">临期积分优先</button>
+    </div>
+    <div class="ua">
+      <span class="label">上游 UA</span>
+      <code id="ua-value">—</code>
+      <span class="state" id="ua-source"></span>
+      <span class="hdr">
+        <span class="label">出站头</span>
+        <code id="hdr-count">—</code>
+        <span class="state" id="hdr-state"></span>
+      </span>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">今日请求</div>
+      <div class="value" id="k-requests">—</div>
+      <div class="hint" id="k-failed"></div>
+    </div>
+    <div class="card">
+      <div class="label">今日输入 token</div>
+      <div class="value" id="k-prompt">—</div>
+      <div class="hint">含上下文与历史</div>
+    </div>
+    <div class="card">
+      <div class="label">今日输出 token</div>
+      <div class="value" id="k-completion">—</div>
+      <div class="hint" id="k-reasoning"></div>
+    </div>
+    <div class="card accent">
+      <div class="label">今日积分消耗</div>
+      <div class="value" id="k-credit">—</div>
+      <div class="hint">服务端回传的真实扣减</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>近 7 天 token 趋势 <span class="note" id="range"></span></h2>
+    <div class="chart" id="chart"></div>
+    <div class="legend">
+      <span><i class="in"></i>输入 <span class="ax">左轴</span></span>
+      <span><i class="out"></i>输出 <span class="ax">右轴</span></span>
+    </div>
+  </section>
+
+  <section class="mlist">
+    <h2>模型 <span class="note" id="model-note"></span></h2>
+    <div id="models"></div>
+  </section>
+
+  <section>
+    <h2>最近请求 <span class="note" id="recent-note"></span></h2>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th><th>模型</th><th>账号</th>
+            <th class="num">输入</th><th class="num">输出</th><th class="num">速度 <span style="opacity:.7">tok/s</span></th><th class="num">思考</th>
+            <th class="num">积分</th><th class="num">耗时</th>
+          </tr>
+        </thead>
+        <tbody id="recent"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="recent-empty" style="display:none">今天还没有经网关的请求</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var BASE = 'http://127.0.0.1:47900';
+  // 由代理在响应 /dashboard 时注入，只用于「测试」按钮调用本机控制接口。
+  var TOKEN = '__GW_TOKEN__';
+  // 上游接过、但 models.json 里还没配的模型 id。清单由网关 /healthz 的
+  // addableModels 下发（上游没有模型列表接口，只能在网关侧 credit-proxy.js 里维护）。
+  // 这里默认空：网关还是旧进程时这一组直接不显示，不拿一份过期清单糊弄人。
+  var ADDABLE_MODELS = [];
+  var configuredModels = [];
+  // 小写 id -> 配置里写的大写形式。上游会归一化成小写存用量，展示时换回配置的写法。
+  var modelDisplay = {};
+  // 连通性探测结果缓存：看板每 10 秒重建一次列表，不缓存的话刚测出的结果会被覆盖。
+  var probeResults = {};
+  // 正在探测的模型：探测期间不重建列表，否则「测试中」的按钮会被抹掉。
+  var probing = {};
+  // 「上游可用但未配置」那一组的展开状态。默认收起：十几行「未配置」会把
+  // 真正要看的已配置模型挤到很下面。轮询重建时靠这个变量保住展开状态。
+  var extrasOpen = false;
+  // 账号短 uid（8 位前缀）→ 昵称。数据来自 /healthz 的候选账号，纯前端映射，
+  // 因此改完只刷新页面即可生效，不必重启代理进程。
+  // 看板对外只显示昵称：短 uid 对使用者没有意义，也不该出现在展示层。
+  var accountNames = {};
+  var accountLabel = function (shortId) {
+    var key = String(shortId || '');
+    if (!key) return '—';
+    return accountNames[key] || '—';
+  };
+  // 首屏「本次请求账号」不能显示成「—」：昵称映射还没到时先用短 uid 兜底。
+  var accountLabelOrId = function (shortId) {
+    var key = String(shortId || '');
+    if (!key) return '—';
+    return accountNames[key] || key;
+  };
+  var num = function (n) {
+    n = Number(n) || 0;
+    return n.toLocaleString('zh-CN');
+  };
+  var money = function (n) { return (Number(n) || 0).toFixed(2); };
+  var clock = function (ms) {
+    var d = new Date(ms);
+    var p = function (v) { return String(v).padStart(2, '0'); };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  };
+  var shortModel = function (name) {
+    return String(name || 'unknown').replace(/^m\//, '');
+  };
+  // 用量记录里存的是归一化后的小写 id（上游只认小写），展示时换回配置里的大写写法，
+  // 否则会出现「列表大写、最近请求小写」两套写法。
+  var displayModel = function (name) {
+    var raw = shortModel(name);
+    return modelDisplay[raw.toLowerCase()] || raw;
+  };
+  var pick = function (id) { return document.getElementById(id); };
+
+  // 把「登的是谁、用的是谁」摆到明面上：凭据错配是账号风险里最该被看见的一条，
+  // 不能只藏在日志里。数据来自 /healthz 的 lastRequest 与 order。
+  function renderAccount(d) {
+    var lr = (d && d.lastRequest) || null;
+    var used = pick('acct-used');
+    var state = pick('acct-state');
+    if (!lr) {
+      used.textContent = '—';
+      state.textContent = '还没有经网关的请求';
+      state.className = 'state';
+    } else {
+      used.textContent = accountLabelOrId(lr.uid);
+      if (lr.matched) {
+        state.textContent = '与当前登录一致';
+        state.className = 'state';
+      } else if (lr.current) {
+        state.textContent = '与当前登录不一致（当前：' + accountLabelOrId(lr.current) + '）';
+        state.className = 'state warn';
+      } else {
+        state.textContent = '当前登录账号未知';
+        state.className = 'state warn';
+      }
+    }
+    var order = String((d && d.order) || 'current');
+    ['current', 'expiring'].forEach(function (mode) {
+      var btn = pick('order-' + mode);
+      if (btn) btn.setAttribute('aria-pressed', String(mode === order));
+    });
+  }
+
+  // 上游 UA：只回答「现在发出去的是什么、它从哪来的」。
+  // 走到 cache / builtin 两级时标黄——那意味着这次没探测成功，值可能跟不上客户端版本。
+  var UA_SOURCES = {
+    cdp: { text: '客户端自报', warn: false },
+    package: { text: '安装包推导', warn: false },
+    cache: { text: '上次缓存', warn: true },
+    builtin: { text: '内置兜底', warn: true }
+  };
+  function renderUa(d) {
+    var info = (d && d.upstreamUa) || null;
+    var value = pick('ua-value');
+    var source = pick('ua-source');
+    if (!info || !info.ua) {
+      value.textContent = '—';
+      value.title = '';
+      source.textContent = '尚未解析';
+      source.className = 'state';
+      return;
+    }
+    // 显示「实际发出去的那个」：nodeUa 才是官方 node 客户端的形态。
+    // 浏览器 UA（CDP 自报的那份）只进 title 备查，避免看板与实际出站值对不上。
+    var official = String(info.nodeUa || '');
+    value.textContent = official || info.ua;
+    value.title = official ? (official + '\n客户端自报：' + info.ua) : info.ua;
+    var meta = UA_SOURCES[info.source] || { text: info.source || '未知来源', warn: true };
+    if (official) {
+      source.textContent = meta.text;
+      source.className = 'state' + (meta.warn ? ' warn' : '');
+    } else {
+      // 没探测到 CLI 版本就拼不出官方形态，等于还用一个客户端不会发的 UA。
+      source.textContent = '缺 CLI 版本';
+      source.className = 'state warn';
+    }
+  }
+
+  // 出站请求头：回答「身份头到底补齐了吗」。数据来自 /healthz 的 upstreamHeaderKeys
+  // （只有头名、没有值），所以这里可以安全地把整份名单挂在 title 上。
+  // 缺任何一条必需身份头都标黄——那说明这一发在上游眼里又变回「不像官方客户端」了。
+  var REQUIRED_HEADERS = ['x-ide-name', 'x-ide-version', 'x-product', 'x-agent-intent', 'x-user-id'];
+  function renderHeaders(d) {
+    var keys = (d && Array.isArray(d.upstreamHeaderKeys)) ? d.upstreamHeaderKeys : [];
+    var count = pick('hdr-count');
+    var state = pick('hdr-state');
+    if (!count || !state) return;
+    if (!keys.length) {
+      count.textContent = '—';
+      count.title = '';
+      state.textContent = '还没有请求';
+      state.className = 'state';
+      return;
+    }
+    var missing = REQUIRED_HEADERS.filter(function (name) { return keys.indexOf(name) < 0; });
+    count.textContent = keys.length + ' 个';
+    count.title = keys.join('\n');
+    state.textContent = missing.length ? '缺 ' + missing.join('、') : '身份头齐全';
+    state.className = 'state' + (missing.length ? ' warn' : '');
+  }
+
+  function setOrder(mode) {
+    // embed 模式（应用内嵌 iframe）不注入 token，写接口必然 401：直接给出可执行的指引，
+    // 而不是让用户看到一次静默失败。
+    if (!TOKEN) { fail('内嵌视图只读：请点面板上方「浏览器打开」后再切换选号顺序'); return; }
+    fail('正在切换到' + (mode === 'expiring' ? '临期积分优先…' : '当前账号优先…'));
+    fetch(BASE + '/control/order', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({ mode: mode })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (!res || !res.ok) {
+        fail('切换失败：' + ((res && res.message) || '未知错误'));
+        return;
+      }
+      // 落盘失败时本次仍生效，但重启会回退——这种「看起来成功其实没记住」必须说出来。
+      if (res.saved === false) { fail('已切换，但落盘失败，重启后会回退默认'); return; }
+      load();
+    }).catch(function (e) {
+      fail('切换失败：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  function renderSummary(s) {
+    var t = s.today || {};
+    pick('k-requests').textContent = num(t.requests);
+    pick('k-failed').textContent = t.failed ? (t.failed + ' 次失败') : '';
+    pick('k-prompt').textContent = num(t.prompt);
+    pick('k-completion').textContent = num(t.completion);
+    pick('k-reasoning').textContent = (t.reasoning ? ('思考 ' + num(t.reasoning)) : '不含思考') + (t.tokps ? (' · 均速 ' + t.tokps + ' tok/s') : '');
+    pick('k-credit').textContent = money(t.credit);
+
+    // 趋势图：输入走左轴、输出走右轴。两条线各按自己的最大值归一 ——
+    // 输入是千万~亿级、输出是十万级，共用一根轴会把输出压成贴底直线。
+    var daily = s.daily || [];
+    lastTrend = { daily: daily, todayKey: t.date };
+    renderTrend();
+    if (daily.length) {
+      pick('range').textContent = daily[0].date + ' ~ ' + daily[daily.length - 1].date;
+    }
+
+    renderModels(configuredModels, s.byModel);
+  }
+
+  // 最近一次的趋势数据：窗口尺寸变化时用它重绘，不必等下一次轮询。
+  var lastTrend = null;
+  var trendResizeTimer = null;
+
+  // 轴上数值统一走「亿 / 万」，最多 5 个字符，免得左右轴标签把绘图区挤窄。
+  function axisNum(v) {
+    v = Number(v) || 0;
+    if (v >= 1e8) {
+      var yi = v / 1e8;
+      return (yi >= 10 ? Math.round(yi) : Math.round(yi * 10) / 10) + '亿';
+    }
+    if (v >= 1e4) return Math.round(v / 1e4) + '万';
+    return String(Math.round(v));
+  }
+
+  // 把最大值抬到 1/2/5 × 10^n，让刻度落在整档上（453M → 5亿）。
+  function niceMax(v) {
+    if (!(v > 0)) return 0;
+    var p = Math.pow(10, Math.floor(Math.log10(v)));
+    var f = v / p;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+  }
+
+  function renderTrend() {
+    if (!lastTrend) return;
+    var host = pick('chart');
+    if (!host) return;
+    var daily = lastTrend.daily || [];
+    var n = daily.length;
+    var W = host.clientWidth || 640;
+    var H = host.clientHeight || 176;
+    var pad = { top: 14, right: 48, bottom: 24, left: 50 };
+    var plotW = Math.max(20, W - pad.left - pad.right);
+    var plotH = Math.max(20, H - pad.top - pad.bottom);
+    var baseY = pad.top + plotH;
+
+    var rawIn = 0, rawOut = 0;
+    daily.forEach(function (d) {
+      rawIn = Math.max(rawIn, d.prompt || 0);
+      rawOut = Math.max(rawOut, d.completion || 0);
+    });
+    var maxIn = niceMax(rawIn);
+    var maxOut = niceMax(rawOut);
+    var step = n > 1 ? plotW / (n - 1) : 0;
+    var X = function (i) { return pad.left + i * step; };
+    var Y = function (v, max) { return baseY - plotH * (max > 0 ? Math.min(1, (v || 0) / max) : 0); };
+
+    var g = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">';
+    var ticks = [0, .5, 1];
+    g += '<g class="grid">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<line x1="' + pad.left + '" y1="' + y + '" x2="' + (pad.left + plotW) + '" y2="' + y + '"/>';
+    });
+    g += '</g>';
+    g += '<g class="axis axis-l">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<text x="' + (pad.left - 8) + '" y="' + (y + 3.5) + '">' + axisNum(maxIn * r) + '</text>';
+    });
+    g += '</g>';
+    g += '<g class="axis axis-r">';
+    ticks.forEach(function (r) {
+      var y = baseY - plotH * r;
+      g += '<text x="' + (pad.left + plotW + 8) + '" y="' + (y + 3.5) + '">' + axisNum(maxOut * r) + '</text>';
+    });
+    g += '</g>';
+
+    if (n) {
+      var inPts = daily.map(function (d, i) { return X(i) + ',' + Y(d.prompt, maxIn); });
+      var outPts = daily.map(function (d, i) { return X(i) + ',' + Y(d.completion, maxOut); });
+      // 面积只铺在输入线下面，两条面积叠加会发糊。
+      if (n > 1) {
+        g += '<path class="area-in" d="M' + X(0) + ',' + baseY + ' L' + inPts.join(' L') + ' L' + X(n - 1) + ',' + baseY + ' Z"/>';
+      }
+      g += '<path class="line-out" d="M' + outPts.join(' L') + '"/>';
+      g += '<path class="line-in" d="M' + inPts.join(' L') + '"/>';
+      daily.forEach(function (d, i) {
+        var r = d.date === lastTrend.todayKey ? 3.4 : 2.4;
+        g += '<circle class="pt in" cx="' + X(i) + '" cy="' + Y(d.prompt, maxIn) + '" r="' + r + '"/>';
+        g += '<circle class="pt out" cx="' + X(i) + '" cy="' + Y(d.completion, maxOut) + '" r="' + r + '"/>';
+      });
+      daily.forEach(function (d, i) {
+        g += '<text class="xlab' + (d.date === lastTrend.todayKey ? ' today' : '') + '" x="' + X(i) + '" y="' + (H - 5) + '">' + d.date.slice(5) + '</text>';
+      });
+    }
+    g += '<line class="vline" x1="0" y1="' + pad.top + '" x2="0" y2="' + baseY + '" style="opacity:0"/>';
+    g += '</svg>';
+    // 折线没有柱子的「高度」可比，具体数值靠 hover 给。
+    g += '<div class="chart-tip"></div>';
+    host.innerHTML = g;
+
+    var tip = host.querySelector('.chart-tip');
+    var vline = host.querySelector('.vline');
+    host.onmousemove = function (ev) {
+      if (!n) return;
+      var box = host.getBoundingClientRect();
+      var mx = ev.clientX - box.left;
+      var i = step > 0 ? Math.round((mx - pad.left) / step) : 0;
+      i = Math.max(0, Math.min(n - 1, i));
+      var d = daily[i];
+      var cx = X(i);
+      vline.setAttribute('x1', cx);
+      vline.setAttribute('x2', cx);
+      vline.style.opacity = '1';
+      tip.innerHTML = '<b>' + d.date + '</b><br>' +
+        '<span class="r">输入</span> ' + num(d.prompt) + '<br>' +
+        '<span class="r">输出</span> ' + num(d.completion) + '<br>' +
+        '<span class="r">积分</span> ' + money(d.credit);
+      tip.classList.add('show');
+      // 贴着当天两条线的较高点显示，默认放下方，贴到下边界再翻到上方，
+      // 避免提示框压住峰值那段折线。
+      var tw = tip.offsetWidth;
+      var th = tip.offsetHeight;
+      var yDot = Math.min(Y(d.prompt, maxIn), Y(d.completion, maxOut));
+      var top = yDot + 14;
+      if (top + th > H - 4) top = Math.max(0, yDot - th - 14);
+      tip.style.left = Math.max(0, Math.min(W - tw, cx - tw / 2)) + 'px';
+      tip.style.top = top + 'px';
+    };
+    host.onmouseleave = function () {
+      tip.classList.remove('show');
+      vline.style.opacity = '0';
+    };
+  }
+
+  window.addEventListener('resize', function () {
+    clearTimeout(trendResizeTimer);
+    trendResizeTimer = setTimeout(renderTrend, 120);
+  });
+
+  // 「模型」区块：已配置的（走本网关）+ 上游可用但没配的，两边都能单独测连通性。
+  function renderModels(configured, byModel) {
+    // 有探测在飞行中就不重建：重建会把按钮和刚拿到的结果一起抹掉。
+    if (Object.keys(probing).length) return;
+    var host = pick('models');
+    host.innerHTML = '';
+    var used = {};
+    // 比较必须忽略大小写：用量里存小写，配置里是 DeepSeek-V4.1-Flash 这种写法。
+    (byModel || []).forEach(function (m) { used[shortModel(m.model).toLowerCase()] = m; });
+
+    var ids = {};
+    var rows = (configured || []).map(function (m) {
+      ids[shortModel(m.id).toLowerCase()] = true;
+      return { id: shortModel(m.id), name: m.name || '', pending: false };
+    });
+    var extras = ADDABLE_MODELS.filter(function (id) { return !ids[id.toLowerCase()]; }).map(function (id) {
+      return { id: id, name: '未配置', pending: true };
+    });
+    pick('model-note').textContent = rows.length + ' 个已配置 · ' + extras.length + ' 个可添加';
+
+    function group(label, hint, items, opts) {
+      if (!items.length) return;
+      var collapsible = !!(opts && opts.collapsible);
+      var head = document.createElement('div');
+      head.className = 'grp' + (collapsible ? ' toggle' : '') + (collapsible && extrasOpen ? ' open' : '');
+      if (collapsible) {
+        head.dataset.group = opts.key;
+        head.tabIndex = 0;
+        head.setAttribute('role', 'button');
+        head.setAttribute('aria-expanded', extrasOpen ? 'true' : 'false');
+      }
+      head.innerHTML =
+        (collapsible ? '<span class="caret"></span>' : '') +
+        label +
+        (hint ? ' <span class="note">' + hint + '</span>' : '') +
+        (collapsible ? '<span class="gcount">' + items.length + '</span>' : '');
+      host.appendChild(head);
+
+      // 折叠组的行单独包一层：展开/收起只切 hidden，不重建 DOM，
+      // 否则正在飞的「测试中」按钮会被抹掉。
+      var body = null;
+      if (collapsible) {
+        body = document.createElement('div');
+        body.className = 'grp-body';
+        body.dataset.group = opts.key;
+        body.hidden = !extrasOpen;
+        host.appendChild(body);
+      }
+      var rowHost = body || host;
+      items.forEach(function (item) {
+        var stat = used[item.id.toLowerCase()];
+        var cached = probeResults[item.id];
+        // 60 秒内的探测结果优先于默认状态：失败的红点不能被自动刷新洗回灰色。
+        var fresh = cached && (Date.now() - cached.at) < 60000;
+        var dotCls = fresh ? ('dot ' + (cached.ok ? 'ok' : 'bad')) : ('dot' + (stat ? ' ok' : ''));
+        var btnCls = fresh ? ('mtest ' + (cached.ok ? 'ok' : 'bad')) : 'mtest';
+        var btnText = fresh ? cached.text : '测试';
+        var row = document.createElement('div');
+        row.className = 'mrow' + (item.pending ? ' pending' : '');
+        row.dataset.model = item.id;
+        row.innerHTML =
+          '<span class="' + dotCls + '"></span>' +
+          '<span class="mid">' + item.id + '</span>' +
+          '<span class="msub">' + item.name + '</span>' +
+          '<span class="mnum">' + (stat ? stat.requests + ' 次' : '—') + '</span>' +
+          '<span class="mnum credit">' + (stat ? money(stat.credit) : '—') + '</span>' +
+          (TOKEN ? '<button class="' + btnCls + '" type="button">' + btnText + '</button>' : '<span></span>');
+        if (fresh) {
+          row.title = cached.title;
+        } else if (stat) {
+          row.title = '今日 请求 ' + stat.requests + '　输入 ' + num(stat.prompt) + '　输出 ' + num(stat.completion);
+        }
+        rowHost.appendChild(row);
+      });
+    }
+    group('已配置 · 走本网关', '', rows);
+    group('上游可用但未配置', '把 id 填进 models.json 即可用', extras, { collapsible: true, key: 'extras' });
+  }
+
+  // 单个模型连通性探测：极短请求确认这个 id 现在真能通，失败时保留上游原话。
+  function probeModel(model, btn, row) {
+    var dot = row.querySelector('.dot');
+    probing[model] = true;
+    btn.disabled = true;
+    btn.className = 'mtest';
+    btn.textContent = '测试中';
+    row.title = '正在向 ' + model + ' 发送探测请求…';
+
+    function finish(ok, text, title) {
+      delete probing[model];
+      probeResults[model] = { ok: ok, text: text, title: title, at: Date.now() };
+      btn.disabled = false;
+      btn.className = 'mtest ' + (ok ? 'ok' : 'bad');
+      btn.textContent = text;
+      dot.className = 'dot ' + (ok ? 'ok' : 'bad');
+      row.title = title;
+      // 结果留在按钮上直到缓存过期（60 秒），期间仍可再点。
+      // 早先 4 秒回弹到「测试」会和 10 秒轮询重建打架，出现文字闪烁。
+    }
+
+    fetch(BASE + '/control/test-model', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({ model: model }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.ok) {
+        var ms = Number(d.ms) || 0;
+        finish(true, ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms',
+          '连通正常 · 账号 ' + accountLabel(d.uid) + ' · ' + ms + 'ms');
+      } else {
+        finish(false, '失败', (d && (d.message || ('HTTP ' + d.status))) || '探测失败');
+      }
+    }).catch(function (e) {
+      finish(false, '失败', '连不上网关：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  // 速度 = 输出 token ÷ 生成耗时（总耗时减去首 token 延迟）。
+  // 旧记录没有首字计时，只能退回整体速率并用 ~ 标记，避免被误读成真实生成速度。
+  function speedCell(r) {
+    var ct = Number(r.ct) || 0;
+    var ms = Number(r.ms) || 0;
+    if (!ct || !ms) return { text: '—', title: '' };
+    var ft = Number(r.ft) || 0;
+    if (ft > 0 && ms > ft) {
+      var gen = ms - ft;
+      var tps = ct / (gen / 1000);
+      return {
+        text: tps >= 10 ? tps.toFixed(0) : tps.toFixed(1),
+        title: '首字 ' + (ft / 1000).toFixed(2) + 's · 生成 ' + (gen / 1000).toFixed(2) + 's · 输出 ' + num(ct) + ' tok',
+      };
+    }
+    return {
+      // 用 ≈ 而不是 ~：12px 下波浪线会被看成负号，估出来的速度看着像 -2.8。
+      text: '≈' + (ct / (ms / 1000)).toFixed(1),
+      title: '旧记录无首字计时，按整体耗时估算（含等上下文），会明显偏低',
+    };
+  }
+
+  function renderRecent(items) {
+    var body = pick('recent');
+    body.innerHTML = '';
+    var empty = pick('recent-empty');
+    if (!items || !items.length) {
+      empty.style.display = 'block';
+      pick('recent-note').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    pick('recent-note').textContent = '共 ' + items.length + ' 条';
+    items.forEach(function (r) {
+      var tr = document.createElement('tr');
+      var failed = r.ok === 0;
+      var sp = speedCell(r);
+      tr.innerHTML =
+        '<td>' + clock(r.t) + '</td>' +
+        '<td class="model"><span class="pill">' + displayModel(r.m) + '</span></td>' +
+        '<td>' + accountLabel(r.u) + '</td>' +
+        '<td class="num">' + (failed ? '—' : num(r.pt)) + '</td>' +
+        '<td class="num">' + (failed ? '—' : num(r.ct)) + '</td>' +
+        '<td class="num" title="' + sp.title + '">' + (failed ? '—' : sp.text) + '</td>' +
+        '<td class="num">' + (failed ? '—' : (r.rt ? num(r.rt) : '0')) + '</td>' +
+        '<td class="num">' + (failed ? '<span class="fail">失败</span>' : money(r.cr)) + '</td>' +
+        '<td class="num">' + (r.ms ? (r.ms >= 1000 ? (r.ms / 1000).toFixed(1) + 's' : r.ms + 'ms') : '—') + '</td>';
+      body.appendChild(tr);
+    });
+  }
+
+  function markUpdated() {
+    pick('updated').textContent = '更新于 ' + clock(Date.now());
+  }
+
+  function fail(msg) {
+    pick('updated').textContent = msg;
+  }
+
+  function load() {
+    Promise.all([
+      fetch(BASE + '/usage/summary?days=7').then(function (r) { return r.json(); }),
+      fetch(BASE + '/usage/recent?limit=20').then(function (r) { return r.json(); }),
+      fetch(BASE + '/v1/models').then(function (r) { return r.json(); }),
+      // 账号昵称映射：失败时退化成全部显示「—」，不能连累主数据加载。
+      fetch(BASE + '/healthz').then(function (r) { return r.json(); }).catch(function () { return null; })
+    ]).then(function (res) {
+      ((res[3] && res[3].candidates) || []).forEach(function (c) {
+        if (c && c.uid) accountNames[String(c.uid)] = c.nickname || '未命名账号';
+      });
+      // 「可添加」清单跟着网关走：这里是它唯一的取数入口。
+      ADDABLE_MODELS = ((res[3] && res[3].addableModels) || []).slice();
+      configuredModels = ((res[2] && res[2].data) || []).slice();
+      modelDisplay = {};
+      configuredModels.forEach(function (m) {
+        if (m && m.id) modelDisplay[String(m.id).toLowerCase()] = m.id;
+      });
+      renderAccount(res[3] || {});
+      renderUa(res[3] || {});
+      renderHeaders(res[3] || {});
+      renderSummary(res[0] || {});
+      renderRecent((res[1] && res[1].items) || []);
+      markUpdated();
+    }).catch(function (e) {
+      fail('连不上网关：' + (e && e.message ? e.message : '未知错误'));
+    });
+  }
+
+  // 内嵌视图（embed=1，服务端不注入 token）由面板顶部的「刷新」重载整个 iframe，
+  // 效果与点页内刷新完全一致，所以这里把按钮去掉，避免同一动作出现两个入口。
+  // 独立打开（有 token）时保留：那里没有外层刷新可点。
+  var refreshBtn = pick('refresh');
+  if (!TOKEN && refreshBtn) { refreshBtn.remove(); refreshBtn = null; }
+  if (refreshBtn) refreshBtn.addEventListener('click', load);
+  // 折叠组的展开/收起只切 hidden，不重建列表：重建会把正在飞的「测试中」按钮抹掉。
+  function toggleGroup(head) {
+    var key = head.dataset.group;
+    var open = head.classList.toggle('open');
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var body = pick('models').querySelector('.grp-body[data-group="' + key + '"]');
+    if (body) body.hidden = !open;
+    if (key === 'extras') extrasOpen = open;
+  }
+  // 测试按钮用事件委托：列表每次刷新都会重建，直接绑在行上会丢监听。
+  pick('models').addEventListener('click', function (event) {
+    var head = event.target.closest ? event.target.closest('.grp.toggle') : null;
+    if (head) { toggleGroup(head); return; }
+    var btn = event.target.closest ? event.target.closest('.mtest') : null;
+    if (!btn || btn.disabled) return;
+    var row = btn.closest('.mrow');
+    if (!row || !row.dataset.model) return;
+    probeModel(row.dataset.model, btn, row);
+  });
+  // 键盘同样能开合：标题行 tabindex=0 + role=button，回车/空格切换。
+  pick('models').addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var head = event.target.closest ? event.target.closest('.grp.toggle') : null;
+    if (!head) return;
+    event.preventDefault();
+    toggleGroup(head);
+  });
+  pick('order-current').addEventListener('click', function () { setOrder('current'); });
+  pick('order-expiring').addEventListener('click', function () { setOrder('expiring'); });
+  load();
+  setInterval(load, 10000);
+})();
+</script>
+</body>
+</html>

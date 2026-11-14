@@ -167,7 +167,7 @@ For Linux source installation, use `scripts/install-linux.sh` and `scripts/relau
 git clone https://github.com/babygoton/WorkDaddy.git
 cd WorkDaddy
 bash scripts/install.sh           # Create the backup directory and start the daemon
-bash scripts/relaunch-with-cdp.sh  # Launch WorkBuddy with CDP on port 9222
+bash scripts/relaunch-with-cdp.sh  # Launch WorkBuddy with CDP on port 9226 (9222 is left free for your own Chrome)
 ```
 
 All four clients share the same daemon code. Profiles bind it to the intended client rather than guessing from the first available CDP port:
@@ -207,7 +207,7 @@ For macOS, use `WORKDADDY_BUILD_PROFILE` with any profile from the table above t
 **CDP injection · the official installation is never modified**
 
 ```text
-┌─────────────┐  --remote-debugging-port=9222  ┌──────────────┐
+┌─────────────┐  --remote-debugging-port=9226  ┌──────────────┐
 │  WorkBuddy  │ <───────────────────────────> │  WorkDaddy   │
 │  (Electron) │       Chrome DevTools         │  daemon.js   │
 │             │       Protocol (CDP)         │              │
@@ -217,9 +217,9 @@ For macOS, use `WORKDADDY_BUILD_PROFILE` with any profile from the table above t
 └─────────────┘                              └──────────────┘
 ```
 
-The diagram uses mainland WorkBuddy as an example. In the profile order shown above, local API ports default to `47832`, `47833`, `47834`, and `47835`; renderer CDP ports default to `9222`, `9223`, `9224`, and `9225`. CodeBuddy additionally uses local main-process debugging ports `9244` / `9245` for native authentication and session storage.
+The diagram uses mainland WorkBuddy as an example. In the profile order shown above, local API ports default to `47832`, `47833`, `47834`, and `47835`; renderer CDP ports default to `9226`, `9223`, `9224`, and `9225` (`9222` stays in the mainland profile's candidate pool so an already-running older instance keeps working). CodeBuddy additionally uses local main-process debugging ports `9244` / `9245` for native authentication and session storage.
 
-1. **Unmodified WorkBuddy binaries:** the launcher adds `--remote-debugging-port=9222` when starting WorkBuddy. Its binary and signature remain intact.
+1. **Unmodified WorkBuddy binaries:** the launcher adds `--remote-debugging-port=9226` when starting WorkBuddy. Its binary and signature remain intact.
 2. **CDP connection:** the daemon watches login and authentication network events, with a file watcher as a fallback. Login and token refresh events back up the current account to a stable local directory using `account.uid`.
 3. **Injected UI:** `Runtime.evaluate` runs `inject.js` in the renderer, adding the robot button and the Accounts, Theme, Sessions, Models, Enhance, Automation, Computer, About, and Settings pages according to client capabilities. CodeBuddy hides Enhance.
 4. **Local HTTP API:** the daemon listens on `127.0.0.1:47832`. The panel uses it for account switching, themes, check-ins, permission prompts, sleep control, and other features.

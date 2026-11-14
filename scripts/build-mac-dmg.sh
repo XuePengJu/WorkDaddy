@@ -16,8 +16,10 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 
 VERSION="${WORKDADDY_BUILD_VERSION:-$(grep -o "DAEMON_VERSION = '[^']*'" scripts/daemon.js | head -1 | cut -d"'" -f2)}"
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "错误：发布版本必须是 x.y.z，实际为 ${VERSION}" >&2
+# 允许四段式：前 3 段必须是数字（对齐上游语义），第 4 段可带字母，
+# 用于「依赖上游版本 + 自己的 beta 号」这种标记，例如 1.2.19.beta1。
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9A-Za-z]+)?$ ]]; then
+  echo "错误：发布版本必须是 x.y.z 或 x.y.z.<beta号>，实际为 ${VERSION}" >&2
   exit 2
 fi
 APP="WorkDaddy.app"
@@ -44,6 +46,7 @@ esac
 echo "==> profile: ${PROFILE}"
 echo "==> 版本: ${VERSION}"
 echo "==> 产物: ${OUT}"
+mkdir -p "$(dirname "$OUT")"
 
 # Synchronize source into a temporary shell; keep the reusable app untouched.
 SHELL_STAGE="$(mktemp -d)"
@@ -65,9 +68,13 @@ chmod 644 "$APP/Contents/Resources/AppIcon.icns"
 echo "==> 应用图标已同步（背景 #e1e1e1）"
 
 # 2) 覆盖运行时代码和主题配置，保留 launcher/Info.plist/壁纸/node_modules/theme-audit.js。
-for f in daemon.js account-identity.js session-copy-error.js persona.js markdown-preview.js renderer-api-bridge.js codebuddy-native.js codebuddy-native-recovery.js codebuddy-session-store.js codebuddy-files.js toast-runtime.js toast-options.js primary-account.js account-credit-cache.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-likes.js automation-zip.js automation.js automation-account-sync.js official-automation-sync.js automation-picker.js token-refresh.js session-db.js session-fork.js session-sync.js session-pin-sync.js session-dirty.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js wallpaper-rotation.js wallpaper-video.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js client-launch-settings.js client-temp.js workbuddy-launch-env.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh; do
+for f in daemon.js account-identity.js session-copy-error.js persona.js markdown-preview.js renderer-api-bridge.js codebuddy-native.js codebuddy-native-recovery.js codebuddy-session-store.js codebuddy-files.js toast-runtime.js toast-options.js primary-account.js account-credit-cache.js completion-report.js automation-runtime.js automation-model.js automation-packages.js automation-compatibility.js automation-transfer.js automation-discovery.js automation-likes.js automation-zip.js automation.js automation-account-sync.js official-automation-sync.js automation-picker.js token-refresh.js session-db.js session-fork.js session-sync.js session-pin-sync.js session-dirty.js third-party-models.js secure-transfer.js session-transfer.js windows-process-boundary.js windows-installer-launch.js workbuddy-compat.js inject.js theme-patches.js theme-text-shadow.js wallpaper-rotation.js wallpaper-video.js theme-vars.js credit-segments.js credit-resource-queries.js credit-request-usage.js credit-history-sync.js credit-usage-store.js credit-rotation.js token-stats.js growth-active.js growth-daily.js atomic-file-write.js client-launch-settings.js client-temp.js workbuddy-launch-env.js ui-port.js checkin-result.js lib.js platform.js profiles.js workbuddy-target.js cdp-targets.js sentry-report.js usage-report.js install.sh relaunch-with-cdp.sh uninstall.sh apply-update.sh official-ua.js upstream-headers.js credit-proxy.js credit-proxy-standalone.js proxy-usage.js credit-proxy-dashboard.html install-credit-proxy.sh; do
   [ -f "scripts/$f" ] && cp "scripts/$f" "$APP/Contents/Resources/scripts/$f"
 done
+# 积分轮换代理安装脚本需要可执行位，便于安装后直接 ./install-credit-proxy.sh
+if [ -f "$APP/Contents/Resources/scripts/install-credit-proxy.sh" ]; then
+  chmod 755 "$APP/Contents/Resources/scripts/install-credit-proxy.sh"
+fi
 # Theme tokens are source code too; the reusable shell may contain older colors.
 mkdir -p "$APP/Contents/Resources/scripts/builtin/nebula"
 cp scripts/builtin/nebula/theme.json "$APP/Contents/Resources/scripts/builtin/nebula/theme.json"
@@ -299,6 +306,55 @@ source = source.replace('  notify "WorkDaddy" "未找到 WorkBuddy 应用，启�
 with open(path, 'w', encoding='utf-8', newline='') as f:
     f.write(source)
 PY
+# 积分轮换代理随启动器一起拉起：只在双击打开 WorkDaddy 时确保它在跑，
+# 不注册 LaunchAgent（老板明确不要开机自启）。失败只写日志，不阻塞 daemon/CDP/注入。
+python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PYPROXY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding='utf-8')
+marker = '# 2) 已在调试模式'
+snippet = r'''# 积分轮换代理：随 WorkDaddy 双击启动一并拉起（不注册开机自启，失败不影响主流程）
+CREDIT_PROXY_PORT="${WBSWITCH_CREDIT_PROXY_PORT:-47900}"
+credit_proxy_up() {
+  curl -fsS --noproxy '*' -m 1 -o /dev/null "http://127.0.0.1:${CREDIT_PROXY_PORT}/healthz" 2>/dev/null
+}
+ensure_credit_proxy() {
+  if credit_proxy_up; then
+    echo "[$(date -u +%FT%TZ)] credit-proxy 已在运行: ${CREDIT_PROXY_PORT}"
+    return 0
+  fi
+  local proxy_js="$SCRIPTS_DIR/credit-proxy-standalone.js"
+  if [ ! -f "$proxy_js" ]; then
+    echo "[$(date -u +%FT%TZ)] 缺少 credit-proxy-standalone.js，跳过积分轮换代理"
+    return 0
+  fi
+  WBSWITCH_DATA_DIR="$DATA_DIR" WBSWITCH_PROFILE="$PROFILE" WBSWITCH_CREDIT_PROXY_PORT="$CREDIT_PROXY_PORT" \
+    nohup "$NODE_BIN" "$proxy_js" >> "$DATA_DIR/credit-proxy.log" 2>&1 &
+  disown 2>/dev/null || true
+  local i
+  for i in $(seq 1 20); do
+    if credit_proxy_up; then
+      echo "[$(date -u +%FT%TZ)] credit-proxy 已启动: ${CREDIT_PROXY_PORT}"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "[$(date -u +%FT%TZ)] credit-proxy 启动未就绪: ${CREDIT_PROXY_PORT}（详见 credit-proxy.log）"
+  return 0
+}
+ensure_credit_proxy
+
+'''
+if 'ensure_credit_proxy() {' in source:
+    pass
+elif marker in source:
+    source = source.replace(marker, snippet + marker, 1)
+    path.write_text(source, encoding='utf-8', newline='')
+else:
+    raise SystemExit('macOS launcher 缺少积分轮换代理插入锚点')
+PYPROXY
 # 启动器只能复用当前 profile 的 WorkBuddy CDP；否则 CN 包会把 WorkBuddy AI 的端口
 # 当成可复用目标，随后 daemon 按 CN profile 拒绝连接，用户看到的是启动器快速失败。
 python3 - "$PACKAGE_APP/Contents/MacOS/launcher" <<'PY'
@@ -416,12 +472,18 @@ with open(path, 'w', encoding='utf-8', newline='') as f:
     f.write(source)
 PY
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$PACKAGE_APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "$PACKAGE_APP/Contents/Info.plist"
+# CFBundleVersion（构建号）苹果要求逐段都是整数，不能出现 beta 这种字母段：
+# 四段式时把 beta 段数字化为 1.2.19.beta1 -> 1.2.19.1；三段式保持原值。
+BUNDLE_VERSION="$VERSION"
+if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.(beta)?([0-9]+)$ ]]; then
+  BUNDLE_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[3]}"
+fi
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUNDLE_VERSION}" "$PACKAGE_APP/Contents/Info.plist"
 # 无论源码壳当前版本如何，每次产物都必须让 daemon 版本与安装包版本一致。
 perl -0pi -e "s/(const DAEMON_VERSION = ')[^']+(';)/\${1}${VERSION}\${2}/" \
   "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"
-# 壳内可能残留旧的 release-x.y.z；只替换 Build ID 的版本段，保留日期/功能后缀。
-perl -0pi -e "s/(const DAEMON_BUILD_ID = 'release-)[0-9]+\\.[0-9]+\\.[0-9]+/\${1}${VERSION}/" \
+# 壳内可能残留旧的 release-x.y.z（或 x.y.z.betaN）；只替换 Build ID 的版本段，保留日期/功能后缀。
+perl -0pi -e "s/(const DAEMON_BUILD_ID = 'release-)[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9A-Za-z]+)?/\${1}${VERSION}/" \
   "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"
 if ! grep -q "const DAEMON_VERSION = '${VERSION}';" "$PACKAGE_APP/Contents/Resources/scripts/daemon.js" \
   || ! grep -q "const DAEMON_BUILD_ID = 'release-${VERSION}-" "$PACKAGE_APP/Contents/Resources/scripts/daemon.js"; then

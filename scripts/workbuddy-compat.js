@@ -92,10 +92,24 @@
     if (!shells.length && !doc.querySelector('.teams-container,.conversation-page-chrome')) {
       shells = Array.from(doc.querySelectorAll('.chat-container'));
     }
+    // WorkBuddy 5.11.3+ 的「工作台」首页/teams 路由不再挂载 .conversation-shell，
+    // 会话主区变成 .layout-window-frame__body（输入区在 .wb-home-page）。只有旧壳
+    // 一个都找不到时才使用新壳：旧壳存在（含 AI 版 teams 布局）时几何完全不变，
+    // 也不会把整个 teams 网格/应用窗口当成会话区。
+    var workbenchShells = [];
+    if (!shells.length &&
+        doc.querySelector('.teams-container,.layout-window-frame,.conversation-page-chrome')) {
+      var frameBody = doc.querySelector('.layout-window-frame__body');
+      var homePage = doc.querySelector('.wb-home-page');
+      if (frameBody) workbenchShells.push(frameBody);
+      if (homePage && homePage !== frameBody) workbenchShells.push(homePage);
+    }
+    var candidates = shells.concat(workbenchShells);
     var previews = Array.from(doc.querySelectorAll('.detail-panel-container'));
-    var fallback = shells.length ? { element:shells[0], rect:null } : null;
-    for (var i = 0; i < shells.length; i++) {
-      var rect = visibleRect(shells[i]);
+    var fallback = candidates.length ? { element:candidates[0], rect:null } : null;
+    for (var i = 0; i < candidates.length; i++) {
+      var isWorkbench = i >= shells.length;
+      var rect = visibleRect(candidates[i]);
       if (!rect) continue;
       for (var j = 0; j < previews.length && rect; j++) {
         var cover = visibleRect(previews[j]);
@@ -106,7 +120,20 @@
         else if (cover.left <= rect.left) rect.left = cover.right;
         if (rect) rect.width = rect.right - rect.left;
       }
-      if (rect) return { element:shells[i], rect:rect };
+      // 新版工作台右侧 aside 展开时会盖住会话主区右半边，按预览面板同样的
+      // 遮挡规则只扣掉右侧重叠部分。aside 是整框祖先（left <= rect.left）时
+      // 不参与扣减，避免把主区整块判空。
+      if (rect && isWorkbench) {
+        var aside = doc.querySelector('.layout-window-frame__aside');
+        var asideRect = aside && visibleRect(aside);
+        if (asideRect && asideRect.left > rect.left && asideRect.right >= rect.right - 1 &&
+            asideRect.top <= rect.top && asideRect.bottom >= rect.bottom) {
+          rect.right = Math.max(rect.left, Math.min(rect.right, asideRect.left));
+          rect.width = rect.right - rect.left;
+          if (rect.width <= 0) rect = null;
+        }
+      }
+      if (rect) return { element:candidates[i], rect:rect };
     }
     return fallback;
   }

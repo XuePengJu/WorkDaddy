@@ -25,7 +25,7 @@ case "$PROFILE" in
   workbuddy-ai) APP_NAME="WorkBuddy AI"; APP_BIN="/Applications/WorkBuddy AI.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/workbuddy-ai"; DEFAULT_UI_PORT=47833; DEFAULT_CDP_PORT=9223; AUTH_DEFAULT="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop-ai.info" ;;
   codebuddy-cn) APP_NAME="CodeBuddy CN"; APP_BIN="/Applications/CodeBuddy CN.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/codebuddy-cn"; DEFAULT_UI_PORT=47834; DEFAULT_CDP_PORT=9224; AUTH_DEFAULT="" ;;
   codebuddy-intl) APP_NAME="CodeBuddy"; APP_BIN="/Applications/CodeBuddy.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy/profiles/codebuddy-intl"; DEFAULT_UI_PORT=47835; DEFAULT_CDP_PORT=9225; AUTH_DEFAULT="" ;;
-  *) PROFILE="workbuddy-cn"; APP_NAME="WorkBuddy"; APP_BIN="/Applications/WorkBuddy.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy"; DEFAULT_UI_PORT=47832; DEFAULT_CDP_PORT=9222; AUTH_DEFAULT="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" ;;
+  *) PROFILE="workbuddy-cn"; APP_NAME="WorkBuddy"; APP_BIN="/Applications/WorkBuddy.app/Contents/MacOS/Electron"; DEFAULT_DATA_DIR="$HOME/Library/Application Support/WorkDaddy"; DEFAULT_UI_PORT=47832; DEFAULT_CDP_PORT=9226; AUTH_DEFAULT="$HOME/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" ;;
 esac
 
 # 企业版可能在 /Applications 下使用不同的 .app 名称。官方路径优先，
