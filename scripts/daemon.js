@@ -557,8 +557,9 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 //        旧壳缺失时解析会话主区，并在现代壳上保留机器人浮窗，修「升级后浮窗始终被隐藏」。
 // 1.2.22.beta1：合入上游 1.2.22（会话 pin、视频壁纸、账号徽标、#524 首页浮窗修复），
 //        跟随上游发布号切到 1.2.22 线。
-const DAEMON_VERSION = '1.2.22.beta1';
-const DAEMON_BUILD_ID = 'release-1.2.22.beta1-upstream-merge-workbench-shell';
+// 1.2.22.beta2：合入 dev/wip-20261103 后按上游优先收口冲突，版本号顺延一版。
+const DAEMON_VERSION = '1.2.22.beta2';
+const DAEMON_BUILD_ID = 'release-1.2.22.beta2-upstream-merge-workbench-shell';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
