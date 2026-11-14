@@ -6426,7 +6426,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       if (!fab) return;
       ensureFabAnchorObserver();
       var area = WBS_COMPAT.findConversationArea(document);
-      var areaHidden = area ? !area.rect : !CAPS.nativeComposer;
+      // 新版工作台壳（5.11.3+）乃至以后的会话壳可能暂时解析不出会话区域。只要
+      // 页面仍是 WorkBuddy 的会话/工作台界面，就不要因 area=null 把机器人整个
+      // 隐藏：先回落到窗口边距显示，DOM 稳定后由 bodyObserver 重新定位。
+      var modernSurface = !!(document.querySelector && document.querySelector(
+        '.teams-container,.layout-window-frame,.conversation-page-chrome,' +
+        '.cr-input-toolbar__right,.cr-document[data-root-id]'));
+      var areaHidden = area ? !area.rect : (!CAPS.nativeComposer && !modernSurface);
       var changed = fab.classList.contains('is-area-hidden') !== areaHidden;
       fab.classList.toggle('is-area-hidden', areaHidden);
       if (messageNavigation) messageNavigation.updateLayout();

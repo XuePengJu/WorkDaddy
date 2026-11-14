@@ -544,8 +544,10 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.20.beta2：workbuddy-cn 首选 CDP 端口改 9226，把 9222 让给用户 Chrome 调试。
 // 1.2.21.beta1：合入上游 1.2.21（会话同步、shared target 检测、client-temp 冷启动清理）。
 // #507: explicit cleanup of old Windows client temp files, only before a verified cold launch.
-const DAEMON_VERSION = '1.2.21.beta1';
-const DAEMON_BUILD_ID = 'release-1.2.21.beta1-session-sync-shared-windows-target';
+// 1.2.21.beta2：适配 WorkBuddy 5.11.3 新版工作台壳（.layout-window-frame__body）：
+//        旧壳缺失时解析会话主区，并在现代壳上保留机器人浮窗，修「升级后浮窗始终被隐藏」。
+const DAEMON_VERSION = '1.2.21.beta2';
+const DAEMON_BUILD_ID = 'release-1.2.21.beta2-workbuddy-5113-workbench-shell';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
