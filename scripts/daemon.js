@@ -549,14 +549,16 @@ const primaryAccountStore = createPrimaryAccountStore(DATA_DIR, (uid) => fs.exis
 // 1.2.81：在共享目标分支加入视频壁纸及失败重试、主题路径边界修复。
 // 1.2.72：积分代理补最低档思考——请求没带档位、带 null/空值、或写成关闭时落
 //         low，修「客户端思考配置存不住，于是永远不思考」。
-// 版本号 = 上游发布小版本 + 自己的 beta 序号。上游 daemon 内部号已走到 1.2.80，
-// 但对外发布号是 1.2.21；这里跟随上游发布号、beta 序号归自己，避免和 1.2.7x 内部号混淆。
+// 版本号 = 上游发布小版本 + 自己的 beta 序号。上游 daemon 内部号已走到 1.2.84，
+// 但对外发布号是 1.2.22；这里跟随上游发布号、beta 序号归自己，避免和 1.2.8x 内部号混淆。
 // 1.2.20.beta2：workbuddy-cn 首选 CDP 端口改 9226，把 9222 让给用户 Chrome 调试。
 // 1.2.21.beta1：合入上游 1.2.21（会话同步、shared target 检测、client-temp 冷启动清理）。
 // 1.2.21.beta2：适配 WorkBuddy 5.11.3 新版工作台壳（.layout-window-frame__body）：
 //        旧壳缺失时解析会话主区，并在现代壳上保留机器人浮窗，修「升级后浮窗始终被隐藏」。
-const DAEMON_VERSION = '1.2.21.beta2';
-const DAEMON_BUILD_ID = 'release-1.2.21.beta2-workbuddy-5113-workbench-shell';
+// 1.2.22.beta1：合入上游 1.2.22（会话 pin、视频壁纸、账号徽标、#524 首页浮窗修复），
+//        跟随上游发布号切到 1.2.22 线。
+const DAEMON_VERSION = '1.2.22.beta1';
+const DAEMON_BUILD_ID = 'release-1.2.22.beta1-upstream-merge-workbench-shell';
 const usageReporter = createUsageReporter({ profile: PROFILE.id, version: DAEMON_VERSION });
 configureAutomationRuntime({version: DAEMON_VERSION, profileId: PROFILE.id, platform: process.platform});
 const automationDiscovery = createAutomationDiscovery({
